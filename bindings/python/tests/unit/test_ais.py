@@ -18,6 +18,7 @@ from marlin.ais import (
     EpfdType,
     Eta,
     ExtendedPositionReportB,
+    LongRangePositionReport,
     ManeuverIndicator,
     NavStatus,
     Other,
@@ -47,6 +48,7 @@ from .ais_vectors import (
     AIVDM_TYPE21_GPSD_T21_1_FRAG1,
     AIVDM_TYPE21_GPSD_T21_1_FRAG2,
     AIVDM_TYPE24B_AUXILIARY_CRAFT,
+    AIVDM_TYPE27,
     aivdm,
 )
 
@@ -867,6 +869,44 @@ def test_aid_to_navigation_report_gpsd_t21_1() -> None:
     assert body.raim is False
     assert body.virtual_aton is False
     assert body.assigned_flag is False
+
+
+def test_long_range_position_report_shape() -> None:
+    p = LongRangePositionReport(
+        mmsi=577305000,
+        navigation_status=NavStatus.MOORED,
+        latitude_deg=5.0,
+        speed_over_ground_kn=12,
+    )
+    assert p.mmsi == 577305000
+    assert p.navigation_status == FieldState.Value(NavStatus.MOORED)
+    assert p.latitude_deg.value == pytest.approx(5.0)
+    assert p.speed_over_ground_kn == FieldState.Value(12)
+    # Defaults:
+    assert p.longitude_deg == FieldState.NotAvailable()
+    assert p.course_over_ground == FieldState.NotAvailable()
+    assert p.position_accuracy is False
+    assert p.raim is False
+    assert p.gnss_position_current is True
+
+
+def test_long_range_position_report_decodes_type_27() -> None:
+    p = AisParser.streaming()
+    p.feed(AIVDM_TYPE27)
+    msgs = list(p)
+    assert len(msgs) == 1
+    assert msgs[0].type_tag == "type27"
+    body = msgs[0].body
+    assert isinstance(body, LongRangePositionReport)
+    assert body.mmsi == 577305000
+    assert body.position_accuracy is True
+    assert body.raim is False
+    assert body.navigation_status == FieldState.Value(NavStatus.MOORED)
+    assert body.longitude_deg.value == pytest.approx(-4000 / 600)
+    assert body.latitude_deg.value == pytest.approx(5.0)
+    assert body.speed_over_ground_kn == FieldState.Value(12)
+    assert body.course_over_ground == FieldState.Value(223)
+    assert body.gnss_position_current is False
 
 
 # ---------- reassembly clock ----------

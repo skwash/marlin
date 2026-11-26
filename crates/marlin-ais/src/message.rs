@@ -51,9 +51,10 @@ pub struct AisMessage {
 
 /// The decoded AIS payload, dispatched on the 6-bit `msg_type` field.
 ///
-/// `#[non_exhaustive]` so additional message types (Type 4, ...) can be added as typed variants in minor versions
-/// without a breaking change. Types this crate does not yet decode
-/// are surfaced as [`Self::Other`] with the raw bit buffer preserved.
+/// `#[non_exhaustive]` so additional message types (Type 4, ...) can
+/// be added as typed variants in minor versions without a breaking
+/// change. Types this crate does not yet decode are surfaced as
+/// [`Self::Other`] with the raw bit buffer preserved.
 ///
 /// The decoded types are listed on each variant below and in the crate
 /// README's message-type table.

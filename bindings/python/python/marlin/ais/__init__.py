@@ -35,6 +35,7 @@ BitReader = _core.ais.BitReader
 # Message variants
 AidToNavigationReport = _core.ais.AidToNavigationReport
 ExtendedPositionReportB = _core.ais.ExtendedPositionReportB
+LongRangePositionReport = _core.ais.LongRangePositionReport
 Other = _core.ais.Other
 PositionReportA = _core.ais.PositionReportA
 PositionReportB = _core.ais.PositionReportB
@@ -53,6 +54,7 @@ AisMessageBody = Union[
     AidToNavigationReport,
     StaticDataB24A,
     StaticDataB24B,
+    LongRangePositionReport,
     Other,
 ]
 
@@ -79,6 +81,7 @@ __all__ = [
     "EpfdType",
     "Eta",
     "ExtendedPositionReportB",
+    "LongRangePositionReport",
     "ManeuverIndicator",
     "NavStatus",
     "Other",

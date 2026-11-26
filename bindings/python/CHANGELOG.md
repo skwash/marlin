@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `marlin.ais.LongRangePositionReport` and its `marlin.dataclasses` mirror:
+  the decoded Type 27 (long-range AIS broadcast) payload. A Type 27
+  message now has `type_tag == "type27"` and used to decode as `Other`.
+
 ## [0.3.0] - 2026-10-09
 
 ### Added

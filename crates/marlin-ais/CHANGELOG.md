@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Type 27 (long-range AIS broadcast) decodes to `LongRangePositionReport`
+  through the new `AisMessageBody::Type27` variant. The floor
+  `LONG_RANGE_POSITION_REPORT_BITS` is 96. Type 27 used to surface as
+  `AisMessageBody::Other`.
+
 ## [0.3.0] - 2026-10-09
 
 ### Added

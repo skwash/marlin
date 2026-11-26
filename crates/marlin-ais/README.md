@@ -13,6 +13,7 @@ Sans-I/O typed decoders for AIS (AIVDM/AIVDO) messages. Built on top of
 | 18 | `PositionReportB` | Class B position report: SOG, position, COG, true heading, Class B capability flags |
 | 19 | `ExtendedPositionReportB` | Class B extended position report: the Type 18 position fields plus name, ship type, dimensions, EPFD |
 | 21 | `AidToNavigationReport` | Aid-to-navigation report: AtoN type, name with its optional extension, position, dimensions, EPFD, off-position and virtual flags |
+| 27 | `LongRangePositionReport` | Long-range (satellite) position report: navigation status, position in 1/10 minute, SOG and COG in whole units, GNSS-current flag |
 | 24 Part A | `StaticDataB24A` | Class B static data: vessel name |
 | 24 Part B | `StaticDataB24B` | Class B static data: ship type, vendor ID, call sign, EPFD, and dimensions or the mother-ship MMSI of an auxiliary craft |
 

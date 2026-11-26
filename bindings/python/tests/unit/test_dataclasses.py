@@ -23,6 +23,7 @@ from .ais_vectors import (
     AIVDM_TYPE21_GPSD_T21_2_FRAG1,
     AIVDM_TYPE21_GPSD_T21_2_FRAG2,
     AIVDM_TYPE24B_AUXILIARY_CRAFT,
+    AIVDM_TYPE27,
 )
 
 GGA = b"$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n"
@@ -368,6 +369,31 @@ def test_ais_sar_aircraft_position_report_round_trip() -> None:
     d = dataclasses.asdict(dc)
     json.dumps(d, default=_json_default)
     assert d["body"]["radio_status"] == 0x8270
+
+
+def test_ais_long_range_position_report_round_trip() -> None:
+    from marlin.ais import AisParser, LongRangePositionReport, NavStatus
+    from marlin.dataclasses import AisMessage as DCAisMessage
+    from marlin.dataclasses import (
+        LongRangePositionReport as DCLongRangePositionReport,
+    )
+    from marlin.dataclasses import to_dataclass
+
+    p = AisParser.streaming()
+    p.feed(AIVDM_TYPE27)
+    msgs = list(p)
+    assert len(msgs) == 1
+    assert isinstance(msgs[0].body, LongRangePositionReport)
+
+    dc = to_dataclass(msgs[0])
+    assert isinstance(dc, DCAisMessage)
+    assert isinstance(dc.body, DCLongRangePositionReport)
+    assert dc.type_tag == "type27"
+    assert dc.body.mmsi == 577305000
+    # The mirror stores the NavStatus wire value as int.
+    assert dc.body.navigation_status == Value(int(NavStatus.MOORED))
+    assert dc.body.speed_over_ground_kn == Value(12)
+    assert dc.body.gnss_position_current is False
 
 
 def test_ais_aid_to_navigation_report_round_trip() -> None:

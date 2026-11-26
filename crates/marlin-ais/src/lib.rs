@@ -19,7 +19,8 @@
 //!   variant: Types 1/2/3 ([`PositionReportA`]), 5
 //!   ([`StaticAndVoyageA`]), 9 ([`SarAircraftPositionReport`]), 18
 //!   ([`PositionReportB`]), 19 ([`ExtendedPositionReportB`]), 21
-//!   ([`AidToNavigationReport`]), and 24 Parts A and B
+//!   ([`AidToNavigationReport`]), 27 ([`LongRangePositionReport`]), and
+//!   24 Parts A and B
 //!   ([`StaticDataB24A`], [`StaticDataB24B`]). Every other type
 //!   surfaces as [`AisMessageBody::Other`] with the raw bits. Every
 //!   field the wire can put in a non-value state is a [`FieldState`]:
@@ -59,6 +60,7 @@ pub mod armor;
 mod bit_reader;
 mod error;
 mod extended_position_report_b;
+mod long_range_position_report;
 mod message;
 mod parser;
 mod position_report_a;
@@ -80,6 +82,9 @@ pub use bit_reader::BitReader;
 pub use error::AisError;
 pub use extended_position_report_b::{
     decode_extended_position_report_b, ExtendedPositionReportB, EXTENDED_POSITION_REPORT_B_BITS,
+};
+pub use long_range_position_report::{
+    decode_long_range_position_report, LongRangePositionReport, LONG_RANGE_POSITION_REPORT_BITS,
 };
 pub use message::{decode, decode_message, AisMessage, AisMessageBody};
 pub use parser::AisFragmentParser;

@@ -19,6 +19,7 @@ use marlin_ais::{
     AtonType as RustAtonType, BitReader as RustBitReader, Dimensions as RustDimensions,
     EpfdType as RustEpfdType, Eta as RustEta,
     ExtendedPositionReportB as RustExtendedPositionReportB, FieldState,
+    LongRangePositionReport as RustLongRangePositionReport,
     ManeuverIndicator as RustManeuverIndicator, NavStatus as RustNavStatus,
     PositionReportA as RustPositionReportA, PositionReportB as RustPositionReportB,
     PositioningStatus as RustPositioningStatus, RateOfTurn as RustRateOfTurn,
@@ -1461,6 +1462,123 @@ impl From<RustPositionReportB> for PyPositionReportB {
     }
 }
 
+// ---------- LongRangePositionReport (Type 27) ----------
+
+/// Long-range (satellite) position report payload (Type 27).
+///
+/// The navigation status, position, speed and course attributes are
+/// `marlin.field.FieldState`s. Speed is in whole knots and course in
+/// whole degrees. `gnss_position_current` is `True` when the position
+/// is the current GNSS position (wire bit 0). The constructor accepts
+/// `FieldState[T] | T | None` per field-state attribute and defaults
+/// every such keyword to `FieldState.NotAvailable()`.
+#[pyclass(name = "LongRangePositionReport", frozen, module = "marlin.ais")]
+#[derive(Clone, Debug)]
+pub struct PyLongRangePositionReport {
+    #[pyo3(get)]
+    mmsi: u32,
+    #[pyo3(get)]
+    position_accuracy: bool,
+    #[pyo3(get)]
+    raim: bool,
+    navigation_status: FieldState<PyNavStatus>,
+    longitude_deg: FieldState<f64>,
+    latitude_deg: FieldState<f64>,
+    speed_over_ground_kn: FieldState<u8>,
+    course_over_ground: FieldState<u16>,
+    #[pyo3(get)]
+    gnss_position_current: bool,
+}
+
+#[pymethods]
+impl PyLongRangePositionReport {
+    #[new]
+    #[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
+    #[pyo3(signature = (
+        mmsi = 0,
+        position_accuracy = false,
+        raim = false,
+        navigation_status = None,
+        longitude_deg = None,
+        latitude_deg = None,
+        speed_over_ground_kn = None,
+        course_over_ground = None,
+        gnss_position_current = true,
+    ))]
+    fn new(
+        mmsi: u32,
+        position_accuracy: bool,
+        raim: bool,
+        navigation_status: Option<&Bound<'_, PyAny>>,
+        longitude_deg: Option<&Bound<'_, PyAny>>,
+        latitude_deg: Option<&Bound<'_, PyAny>>,
+        speed_over_ground_kn: Option<&Bound<'_, PyAny>>,
+        course_over_ground: Option<&Bound<'_, PyAny>>,
+        gnss_position_current: bool,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            mmsi,
+            position_accuracy,
+            raim,
+            navigation_status: field_arg(navigation_status)?,
+            longitude_deg: field_arg(longitude_deg)?,
+            latitude_deg: field_arg(latitude_deg)?,
+            speed_over_ground_kn: field_arg(speed_over_ground_kn)?,
+            course_over_ground: field_arg(course_over_ground)?,
+            gnss_position_current,
+        })
+    }
+
+    #[getter]
+    fn navigation_status(&self, py: Python<'_>) -> PyResult<PyFieldState> {
+        to_py(py, self.navigation_status)
+    }
+    #[getter]
+    fn longitude_deg(&self, py: Python<'_>) -> PyResult<PyFieldState> {
+        to_py(py, self.longitude_deg)
+    }
+    #[getter]
+    fn latitude_deg(&self, py: Python<'_>) -> PyResult<PyFieldState> {
+        to_py(py, self.latitude_deg)
+    }
+    #[getter]
+    fn speed_over_ground_kn(&self, py: Python<'_>) -> PyResult<PyFieldState> {
+        to_py(py, self.speed_over_ground_kn)
+    }
+    #[getter]
+    fn course_over_ground(&self, py: Python<'_>) -> PyResult<PyFieldState> {
+        to_py(py, self.course_over_ground)
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        Ok(format!(
+            "LongRangePositionReport(mmsi={}, lat={}, lon={}, sog={})",
+            self.mmsi,
+            repr_state(py, self.latitude_deg)?,
+            repr_state(py, self.longitude_deg)?,
+            repr_state(py, self.speed_over_ground_kn)?,
+        ))
+    }
+}
+
+impl TryFrom<RustLongRangePositionReport> for PyLongRangePositionReport {
+    type Error = PyErr;
+
+    fn try_from(d: RustLongRangePositionReport) -> PyResult<Self> {
+        Ok(Self {
+            mmsi: d.mmsi,
+            position_accuracy: d.position_accuracy,
+            raim: d.raim,
+            navigation_status: enum_state(d.navigation_status)?,
+            longitude_deg: d.longitude_deg,
+            latitude_deg: d.latitude_deg,
+            speed_over_ground_kn: d.speed_over_ground_kn,
+            course_over_ground: d.course_over_ground,
+            gnss_position_current: d.gnss_position_current,
+        })
+    }
+}
+
 // ---------- ExtendedPositionReportB (Type 19) ----------
 
 /// Class B extended position report payload (Type 19).
@@ -2001,6 +2119,9 @@ pub(crate) fn message_body_to_py(py: Python<'_>, body: AisMessageBody) -> PyResu
         }
         AisMessageBody::Type24A(d) => Py::new(py, PyStaticDataB24A::from(d))?.into_any(),
         AisMessageBody::Type24B(d) => Py::new(py, PyStaticDataB24B::try_from(d)?)?.into_any(),
+        AisMessageBody::Type27(d) => {
+            Py::new(py, PyLongRangePositionReport::try_from(d)?)?.into_any()
+        }
         AisMessageBody::Other {
             msg_type,
             raw_payload,
@@ -2103,6 +2224,7 @@ impl PyAisMessage {
             AisMessageBody::Type21(_) => "type21",
             AisMessageBody::Type24A(_) => "type24a",
             AisMessageBody::Type24B(_) => "type24b",
+            AisMessageBody::Type27(_) => "type27",
             AisMessageBody::Other { .. } => "other",
             _ => "unknown",
         }
@@ -2448,6 +2570,7 @@ pub(crate) fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult
     m.add_class::<PyAidToNavigationReport>()?;
     m.add_class::<PyStaticDataB24A>()?;
     m.add_class::<PyStaticDataB24B>()?;
+    m.add_class::<PyLongRangePositionReport>()?;
     m.add_class::<PyOther>()?;
     // Outer message wrapper:
     m.add_class::<PyAisMessage>()?;

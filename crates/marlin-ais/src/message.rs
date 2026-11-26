@@ -23,10 +23,11 @@ use marlin_nmea_envelope::RawSentence;
 
 use crate::{
     armor, decode_aid_to_navigation_report, decode_extended_position_report_b,
-    decode_position_report_a, decode_position_report_b, decode_sar_aircraft_position_report,
-    decode_static_and_voyage_a, decode_static_data_b, parse_aivdm_wrapper, AidToNavigationReport,
-    AisError, BitReader, ExtendedPositionReportB, PositionReportA, PositionReportB,
-    SarAircraftPositionReport, StaticAndVoyageA, StaticDataB, StaticDataB24A, StaticDataB24B,
+    decode_long_range_position_report, decode_position_report_a, decode_position_report_b,
+    decode_sar_aircraft_position_report, decode_static_and_voyage_a, decode_static_data_b,
+    parse_aivdm_wrapper, AidToNavigationReport, AisError, BitReader, ExtendedPositionReportB,
+    LongRangePositionReport, PositionReportA, PositionReportB, SarAircraftPositionReport,
+    StaticAndVoyageA, StaticDataB, StaticDataB24A, StaticDataB24B,
 };
 
 /// A fully decoded AIS message with envelope metadata.
@@ -50,10 +51,10 @@ pub struct AisMessage {
 
 /// The decoded AIS payload, dispatched on the 6-bit `msg_type` field.
 ///
-/// `#[non_exhaustive]` so additional message types (Type 4, Type 27,
-/// ...) can be added as typed variants in minor versions
-/// without a breaking change. Types this crate does not yet decode
-/// are surfaced as [`Self::Other`] with the raw bit buffer preserved.
+/// `#[non_exhaustive]` so additional message types (Type 4, ...) can
+/// be added as typed variants in minor versions without a breaking
+/// change. Types this crate does not yet decode are surfaced as
+/// [`Self::Other`] with the raw bit buffer preserved.
 ///
 /// The decoded types are listed on each variant below and in the crate
 /// README's message-type table.
@@ -83,6 +84,8 @@ pub enum AisMessageBody {
     /// Type 24 Part B — Class B static, ship type + call sign + extent
     /// (dimensions or mother-ship MMSI) + EPFD type.
     Type24B(StaticDataB24B),
+    /// Type 27 — long-range AIS broadcast (satellite) position report.
+    Type27(LongRangePositionReport),
     /// Any message type this crate does not yet decode. The raw bit
     /// buffer is preserved so callers can plug in their own decoder or
     /// log the payload for later inspection.
@@ -145,6 +148,7 @@ pub fn decode_message(
             StaticDataB::PartB(b) => AisMessageBody::Type24B(b),
             StaticDataB::Reserved { .. } => other_payload(msg_type, bits, total_bits),
         },
+        27 => AisMessageBody::Type27(decode_long_range_position_report(bits, total_bits)?),
         _ => other_payload(msg_type, bits, total_bits),
     };
 
@@ -420,6 +424,30 @@ mod tests {
     }
 
     #[test]
+    fn routes_type_27_to_type27_variant() {
+        let mut w = BitWriter::new();
+        w.u(6, 27);
+        w.u(2, 0);
+        w.u(30, 111_000_027);
+        w.u(58, 0);
+        let (bits, total) = w.finish();
+        assert_eq!(total, 96);
+        match decode_message(&bits, total, false).unwrap().body {
+            AisMessageBody::Type27(lr) => assert_eq!(lr.mmsi, 111_000_027),
+            other => panic!("expected Type27, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn type_27_short_payload_is_rejected() {
+        let (bits, _) = build_unknown(27);
+        match decode_message(&bits, 95, false) {
+            Err(AisError::PayloadTooShort) => {}
+            other => panic!("expected PayloadTooShort, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn type_9_short_payload_is_rejected() {
         let (bits, _) = build_unknown(9);
         match decode_message(&bits, 167, false) {
@@ -637,6 +665,32 @@ mod tests {
         match decode(&raw) {
             Err(AisError::MalformedWrapper) => {}
             other => panic!("expected MalformedWrapper, got {other:?}"),
+        }
+    }
+
+    /// The payload decodes in libais 0.17 to mmsi 577305000, accuracy 1,
+    /// raim 0, nav status 5, x -6.6667, y 5.0, sog 12, cog 223, gnss 0
+    /// (wire bit 1).
+    #[test]
+    fn decode_runs_full_pipeline_on_type27_fixture() {
+        let bytes = build_aivdm(1, 1, None, Some(b'A'), b"K8VSqb9OhH0GL6=v", 0);
+        let raw = parse_raw(&bytes);
+        match decode(&raw).unwrap().body {
+            AisMessageBody::Type27(lr) => {
+                assert_eq!(lr.mmsi, 577_305_000);
+                assert!(lr.position_accuracy);
+                assert!(!lr.raim);
+                assert_eq!(
+                    lr.navigation_status,
+                    marlin_field::FieldState::Value(crate::NavStatus::Moored)
+                );
+                assert!((lr.longitude_deg.value().unwrap() + 6.666_666_666_666_667).abs() < 1e-9);
+                assert!((lr.latitude_deg.value().unwrap() - 5.0).abs() < 1e-9);
+                assert_eq!(lr.speed_over_ground_kn.value(), Some(12));
+                assert_eq!(lr.course_over_ground.value(), Some(223));
+                assert!(!lr.gnss_position_current);
+            }
+            other => panic!("expected Type27, got {other:?}"),
         }
     }
 

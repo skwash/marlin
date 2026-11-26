@@ -702,6 +702,43 @@ class StaticDataB24B:
     def epfd(self) -> FieldState[EpfdType]: ...
 
 @final
+class LongRangePositionReport:
+    """Long-range (satellite) position report (Type 27). Speed is in whole
+    knots and course in whole degrees. `gnss_position_current` is True when
+    the position is the current GNSS position (wire bit 0)."""
+
+    def __new__(
+        cls,
+        mmsi: int = ...,
+        position_accuracy: bool = ...,
+        raim: bool = ...,
+        navigation_status: FieldState[NavStatus] | NavStatus | None = ...,
+        longitude_deg: FieldState[float] | float | None = ...,
+        latitude_deg: FieldState[float] | float | None = ...,
+        speed_over_ground_kn: FieldState[int] | int | None = ...,
+        course_over_ground: FieldState[int] | int | None = ...,
+        gnss_position_current: bool = ...,
+    ) -> LongRangePositionReport: ...
+    @property
+    def mmsi(self) -> int: ...
+    @property
+    def position_accuracy(self) -> bool: ...
+    @property
+    def raim(self) -> bool: ...
+    @property
+    def navigation_status(self) -> FieldState[NavStatus]: ...
+    @property
+    def longitude_deg(self) -> FieldState[float]: ...
+    @property
+    def latitude_deg(self) -> FieldState[float]: ...
+    @property
+    def speed_over_ground_kn(self) -> FieldState[int]: ...
+    @property
+    def course_over_ground(self) -> FieldState[int]: ...
+    @property
+    def gnss_position_current(self) -> bool: ...
+
+@final
 class Other:
     def __new__(
         cls,
@@ -725,6 +762,7 @@ AisMessageBody: TypeAlias = Union[
     AidToNavigationReport,
     StaticDataB24A,
     StaticDataB24B,
+    LongRangePositionReport,
     Other,
 ]
 
@@ -800,6 +838,7 @@ __all__ = [
     "EpfdType",
     "Eta",
     "ExtendedPositionReportB",
+    "LongRangePositionReport",
     "ManeuverIndicator",
     "NavStatus",
     "Other",

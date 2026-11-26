@@ -19,6 +19,16 @@ pub(crate) mod sentinel {
     /// Latitude "not available": 91° in 1/10 000 minute (27-bit two's
     /// complement).
     pub const LAT_NOT_AVAILABLE: i64 = 91 * 600_000;
+    /// Type 27 longitude "not available": 181° in 1/10 minute (18-bit
+    /// two's complement).
+    pub const LONG_RANGE_LON_NOT_AVAILABLE: i64 = 181 * 600;
+    /// Type 27 latitude "not available": 91° in 1/10 minute (17-bit two's
+    /// complement).
+    pub const LONG_RANGE_LAT_NOT_AVAILABLE: i64 = 91 * 600;
+    /// Type 27 speed over ground "not available", in whole knots.
+    pub const LONG_RANGE_SOG_NOT_AVAILABLE: u8 = 63;
+    /// Type 27 course over ground "not available", in whole degrees.
+    pub const LONG_RANGE_COG_NOT_AVAILABLE: u16 = 511;
     /// Course over ground "not available", in 0.1°.
     pub const COG_NOT_AVAILABLE: u16 = 3600;
     /// True heading "not available", in whole degrees.
@@ -101,6 +111,42 @@ pub(crate) const LATITUDE: Partition<f64> = Partition {
     over_range: None,
     defined: -90 * 600_000..=90 * 600_000,
     scale: degrees,
+};
+
+/// Type 27 longitude in 1/10 minute: ±180° defined, +181° not available,
+/// every other code invalid.
+pub(crate) const LONG_RANGE_LONGITUDE: Partition<f64> = Partition {
+    not_available: sentinel::LONG_RANGE_LON_NOT_AVAILABLE,
+    over_range: None,
+    defined: -180 * 600..=180 * 600,
+    scale: degrees_from_tenth_minutes,
+};
+
+/// Type 27 latitude in 1/10 minute: ±90° defined, +91° not available,
+/// every other code invalid.
+pub(crate) const LONG_RANGE_LATITUDE: Partition<f64> = Partition {
+    not_available: sentinel::LONG_RANGE_LAT_NOT_AVAILABLE,
+    over_range: None,
+    defined: -90 * 600..=90 * 600,
+    scale: degrees_from_tenth_minutes,
+};
+
+/// Type 27 speed over ground in whole knots: 0..=62 defined, 63 not
+/// available. The 6-bit field has no over-range code.
+pub(crate) const LONG_RANGE_SPEED: Partition<u8> = Partition {
+    not_available: sentinel::LONG_RANGE_SOG_NOT_AVAILABLE as i64,
+    over_range: None,
+    defined: 0..=62,
+    scale: whole_u8,
+};
+
+/// Type 27 course over ground in whole degrees: 0..=359 defined, 511 not
+/// available, 360..=510 invalid.
+pub(crate) const LONG_RANGE_COURSE: Partition<u16> = Partition {
+    not_available: sentinel::LONG_RANGE_COG_NOT_AVAILABLE as i64,
+    over_range: None,
+    defined: 0..=359,
+    scale: whole_u16,
 };
 
 /// Course over ground in 0.1°: 0..=3599 defined, 3600 not available,
@@ -433,6 +479,13 @@ pub(crate) fn whole_u8(raw: i64) -> u8 {
 #[allow(clippy::cast_precision_loss)] // a 28-bit raw is exact in f64
 fn degrees(raw: i64) -> f64 {
     (raw as f64) / MINUTES_FRAC_PER_DEGREE
+}
+
+/// 1/10 minute (Type 27) to decimal degrees.
+fn degrees_from_tenth_minutes(raw: i64) -> f64 {
+    #[allow(clippy::cast_precision_loss)] // an 18-bit raw is exact in f64
+    let tenth_minutes = raw as f64;
+    tenth_minutes / 600.0
 }
 
 // ---------------------------------------------------------------------------

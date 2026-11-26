@@ -603,6 +603,24 @@ class StaticDataB24B:
 
 
 @dataclass(frozen=True)
+class LongRangePositionReport:
+    """Dataclass mirror of marlin.ais.LongRangePositionReport (Type 27).
+
+    `navigation_status` carries the enum member's int value (the wire code).
+    """
+
+    mmsi: int
+    position_accuracy: bool
+    raim: bool
+    navigation_status: FieldState[int]
+    longitude_deg: FieldState[float]
+    latitude_deg: FieldState[float]
+    speed_over_ground_kn: FieldState[int]
+    course_over_ground: FieldState[int]
+    gnss_position_current: bool
+
+
+@dataclass(frozen=True)
 class Other:
     """Dataclass mirror of marlin.ais.Other (catch-all for un-decoded msg_type)."""
 
@@ -620,6 +638,7 @@ AisMessageBody = Union[
     AidToNavigationReport,
     StaticDataB24A,
     StaticDataB24B,
+    LongRangePositionReport,
     Other,
 ]
 
@@ -743,6 +762,7 @@ __all__ = [
     "Hdg",
     "Hdt",
     "Invalid",
+    "LongRangePositionReport",
     "NmeaMessage",
     "NotAvailable",
     "Other",

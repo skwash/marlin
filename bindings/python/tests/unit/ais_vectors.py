@@ -73,6 +73,10 @@ AIVDM_TYPE9_GPSD_T9_2 = b"!AIVDM,1,1,,B,91b55wi;hbOS@OdQAC062Ch2089h,0*30\r\n"
 # hold the mother-ship MMSI 211000123. Pinned by the Rust BitWriter test
 # `part_b_auxiliary_craft_payload_armors_to_known_string` in
 # crates/marlin-ais/src/static_data_b.rs.
+# Type 27 with known fields, also decoded by libais 0.17: mmsi 577305000,
+# accuracy 1, raim 0, nav status 5, lon -6.6667, lat 5.0, sog 12, cog 223,
+# wire GNSS bit 1.
+AIVDM_TYPE27 = aivdm(1, 1, None, "A", b"K8VSqb9OhH0GL6=v", 0)
 AIVDM_TYPE24B_AUXILIARY_CRAFT = b"!AIVDM,1,1,,A,H>eq`dDUF>4ijkl3Chhi00<Tqds4,0*3A\r\n"
 
 # Type 21 aid-to-navigation report: gpsd test/sample.aivdm T21-1

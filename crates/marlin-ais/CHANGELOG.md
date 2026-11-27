@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `AisReassembler::feed_fragment_tagged`: reassembly keyed on the TAG
+  block group. A fragment with a valid `g:part-total-id` parameter joins
+  the group `(source, id)`, with the source from the `s` parameter, so
+  two stations that reuse one sequential id and channel on a merged feed
+  decode separately. Group fragments may arrive out of order. Without a
+  `g` parameter, or when its part and total differ from the AIVDM header,
+  the fragment keeps the `(channel, sequential_id)` key and the strict
+  ordering. Group partials share the slot limit and the timeout.
+- `AisMessage::tag_block` and `ReassembledPayload::tag_block`: the TAG
+  block of the first sentence of the message, as an `OwnedTagBlock`.
+  `AisFragmentParser` and `decode` fill it.
+- Re-exports of `marlin_nmea_envelope::{OwnedTagBlock, TagBlock,
+  TagGroup}`.
+
+### Changed (BREAKING)
+
+- `AisMessage` and `ReassembledPayload` have a new public field,
+  `tag_block`. Code that builds either struct with a struct literal, or
+  that destructures one without `..`, must add the field.
+
 ## [0.3.0] - 2026-10-09
 
 ### Added

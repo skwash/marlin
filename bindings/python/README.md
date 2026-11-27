@@ -93,8 +93,11 @@ for msg in parser:
         print(msg.body.mmsi, msg.body.latitude_deg.value, msg.body.longitude_deg.value)
 ```
 
-Multi-sentence reassembly is automatic — feed fragments in order and the
-parser yields a complete `AisMessage` only when the last fragment arrives.
+Multi-sentence reassembly is automatic. The parser yields a complete
+`AisMessage` only when the last fragment arrives. Fragments with an NMEA
+4.10 TAG block group (`g:part-total-id`) join by group, in any order. Other
+fragments must arrive in order. `msg.tag_fields` holds the TAG block of the
+first sentence.
 
 ## Quickstart: KLV
 

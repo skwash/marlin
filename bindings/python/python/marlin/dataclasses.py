@@ -659,6 +659,7 @@ class AisMessage:
     is_own_ship: bool
     type_tag: str
     body: AisMessageBody
+    tag_fields: Optional[TagBlock] = None
 
 
 # ---------- type aliases ----------

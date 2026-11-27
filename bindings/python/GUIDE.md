@@ -205,6 +205,27 @@ match body.rate_of_turn:
 messages. It also handles multi-fragment reassembly: a Type 5 split
 across two `!AIVDM` lines arrives as a single `AisMessage`.
 
+When a sentence has an NMEA 4.10 TAG block with a group parameter
+(`g:part-total-id`), the parser joins its fragments by the station (`s`) and
+the group id. Two stations on one merged feed can then reuse the same AIVDM
+sequential id. Fragments of a group may arrive in any order. Without a group
+parameter, fragments must arrive in order, as before. A group that does not
+complete is dropped after `timeout_ms`.
+
+`msg.tag_fields` is the `TagBlock` of the first sentence of the message,
+or `None` when that sentence had no TAG block:
+
+```python
+parser = AisParser.streaming(timeout_ms=300_000)
+...
+if msg.tag_fields is not None:
+    print(msg.tag_fields.source, msg.tag_fields.timestamp)
+```
+
+A later fragment may carry no `s` parameter, because NMEA 4.10 puts it on the
+first sentence of a group. Such a fragment joins the oldest open group with
+its id that still lacks its part.
+
 The `body` attribute holds the typed payload. `msg.type_tag` is a string
 like `"type1"`, `"type5"`, or `"type21"` for filtering without
 `isinstance`.

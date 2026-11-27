@@ -19,7 +19,7 @@
 
 use alloc::vec::Vec;
 
-use marlin_nmea_envelope::RawSentence;
+use marlin_nmea_envelope::{OwnedTagBlock, RawSentence};
 
 use crate::{
     armor, decode_aid_to_navigation_report, decode_extended_position_report_b,
@@ -46,6 +46,11 @@ pub struct AisMessage {
     pub is_own_ship: bool,
     /// The decoded message body.
     pub body: AisMessageBody,
+    /// The TAG block of the message's first sentence, if it had one.
+    /// [`AisFragmentParser`](crate::AisFragmentParser) and [`decode`]
+    /// fill it; [`decode_message`] sees no sentence and leaves it
+    /// `None`.
+    pub tag_block: Option<OwnedTagBlock>,
 }
 
 /// The decoded AIS payload, dispatched on the 6-bit `msg_type` field.
@@ -148,7 +153,11 @@ pub fn decode_message(
         _ => other_payload(msg_type, bits, total_bits),
     };
 
-    Ok(AisMessage { is_own_ship, body })
+    Ok(AisMessage {
+        is_own_ship,
+        body,
+        tag_block: None,
+    })
 }
 
 /// Decode a single-fragment AIS sentence end-to-end.
@@ -172,7 +181,9 @@ pub fn decode_message(
 pub fn decode(raw: &RawSentence<'_>) -> Result<AisMessage, AisError> {
     let header = parse_aivdm_wrapper(raw)?;
     let (bits, total_bits) = armor::decode(header.payload, header.fill_bits)?;
-    decode_message(&bits, total_bits, header.is_own_ship)
+    let mut message = decode_message(&bits, total_bits, header.is_own_ship)?;
+    message.tag_block = raw.tag_fields().map(OwnedTagBlock::from);
+    Ok(message)
 }
 
 /// Build an `Other` variant by copying the bit buffer out. Factored

@@ -269,6 +269,10 @@ impl PyTagBlock {
             inner: OwnedTagBlock::new(content),
         }
     }
+
+    pub(crate) fn from_owned(inner: OwnedTagBlock) -> Self {
+        Self { inner }
+    }
 }
 
 fn lossy(bytes: &[u8]) -> String {

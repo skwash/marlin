@@ -29,7 +29,7 @@ use marlin_ais::{
 };
 use marlin_nmea_envelope::Parser;
 
-use crate::envelope::DEFAULT_MAX_SIZE;
+use crate::envelope::{PyTagBlock, DEFAULT_MAX_SIZE};
 use crate::errors::ais_err;
 use crate::field::{
     enum_state, field_arg, name_variants, repr_state, to_py, unsupported_variant, PyFieldState,
@@ -2026,8 +2026,9 @@ pub(crate) fn message_body_to_py(py: Python<'_>, body: AisMessageBody) -> PyResu
 
 /// Typed AIS message as surfaced by the parser: `is_own_ship` flag,
 /// a string discriminator preserving the underlying AIS message type
-/// (since Types 1/2/3 share one body struct), and the decoded body
-/// pyclass.
+/// (since Types 1/2/3 share one body struct), the decoded body
+/// pyclass, and the TAG block of the first sentence (`tag_fields`,
+/// `None` when that sentence had no TAG block).
 ///
 /// Construct in Python for testing or via `from_rust` from the parser.
 #[pyclass(name = "AisMessage", frozen, module = "marlin.ais")]
@@ -2036,17 +2037,30 @@ pub struct PyAisMessage {
     is_own_ship: bool,
     type_tag: String,
     body: Py<PyAny>,
+    tag_fields: Option<PyTagBlock>,
 }
 
 #[pymethods]
 impl PyAisMessage {
     #[new]
-    fn new(is_own_ship: bool, type_tag: String, body: Py<PyAny>) -> Self {
+    #[pyo3(signature = (is_own_ship, type_tag, body, tag_fields = None))]
+    fn new(
+        is_own_ship: bool,
+        type_tag: String,
+        body: Py<PyAny>,
+        tag_fields: Option<PyTagBlock>,
+    ) -> Self {
         Self {
             is_own_ship,
             type_tag,
             body,
+            tag_fields,
         }
+    }
+
+    #[getter]
+    fn tag_fields(&self) -> Option<PyTagBlock> {
+        self.tag_fields.clone()
     }
 
     #[getter]
@@ -2085,6 +2099,7 @@ impl PyAisMessage {
             is_own_ship: msg.is_own_ship,
             type_tag,
             body,
+            tag_fields: msg.tag_block.map(PyTagBlock::from_owned),
         })
     }
 
@@ -2243,6 +2258,10 @@ fn build_reassembler(timeout_ms: Option<u64>, clock_mode: ClockMode) -> AisReass
 }
 
 /// AIS parser with multi-fragment reassembly and selectable clock source.
+///
+/// Fragments whose TAG block has a valid `g:part-total-id` parameter join
+/// by the `s` parameter and the group id, in any order. Other fragments
+/// join by AIVDM channel and sequential id, in order.
 ///
 /// Three clock modes:
 /// - `timeout_ms=None`: no eviction; the reassembler's clock is never

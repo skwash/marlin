@@ -16,6 +16,7 @@ from typing import Literal, Union, final
 from typing_extensions import Self, TypeAlias, disjoint_base
 
 from .. import MarlinError
+from ..envelope import TagBlock
 from ..field import FieldState
 
 class AisError(MarlinError): ...
@@ -737,6 +738,7 @@ class AisMessage:
         is_own_ship: bool,
         type_tag: str,
         body: AisMessageBody,
+        tag_fields: TagBlock | None = ...,
     ) -> AisMessage: ...
     @property
     def is_own_ship(self) -> bool: ...
@@ -744,6 +746,8 @@ class AisMessage:
     def type_tag(self) -> str: ...
     @property
     def body(self) -> AisMessageBody: ...
+    @property
+    def tag_fields(self) -> TagBlock | None: ...
 
 @final
 class _AisIterator:

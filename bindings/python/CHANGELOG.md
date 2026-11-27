@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `AisMessage.tag_fields`: the `TagBlock` of the first sentence of the
+  message, or `None`. `AisMessage(is_own_ship, type_tag, body,
+  tag_fields=None)` takes it as an optional fourth argument, and the
+  dataclass mirror `AisMessage.tag_fields` defaults to `None`.
+- `AisParser` joins the fragments of a message by the TAG block group
+  (`g:part-total-id`) and the station (`s`) when the sentence has one.
+  Two stations on one merged feed that reuse an AIVDM sequential id and
+  channel decode separately. Group fragments may arrive out of order,
+  and an incomplete group expires after `timeout_ms`. Fragments without
+  a group parameter keep the AIVDM header key and the in-order rule.
 - `marlin.envelope.TagBlock` and `marlin.envelope.TagGroup`: the typed
   parameters of an NMEA 4.10 TAG block (`source`, `timestamp`,
   `timestamp_ms`, `group`, `line_count`, `relative_time`, `destination`,

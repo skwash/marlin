@@ -22,12 +22,12 @@ use alloc::vec::Vec;
 use marlin_nmea_envelope::RawSentence;
 
 use crate::{
-    armor, decode_aid_to_navigation_report, decode_extended_position_report_b,
-    decode_long_range_position_report, decode_position_report_a, decode_position_report_b,
-    decode_sar_aircraft_position_report, decode_static_and_voyage_a, decode_static_data_b,
-    parse_aivdm_wrapper, AidToNavigationReport, AisError, BitReader, ExtendedPositionReportB,
-    LongRangePositionReport, PositionReportA, PositionReportB, SarAircraftPositionReport,
-    StaticAndVoyageA, StaticDataB, StaticDataB24A, StaticDataB24B,
+    armor, decode_aid_to_navigation_report, decode_base_station_report,
+    decode_extended_position_report_b, decode_long_range_position_report, decode_position_report_a,
+    decode_position_report_b, decode_sar_aircraft_position_report, decode_static_and_voyage_a,
+    decode_static_data_b, parse_aivdm_wrapper, AidToNavigationReport, AisError, BaseStationReport,
+    BitReader, ExtendedPositionReportB, LongRangePositionReport, PositionReportA, PositionReportB,
+    SarAircraftPositionReport, StaticAndVoyageA, StaticDataB, StaticDataB24A, StaticDataB24B,
 };
 
 /// A fully decoded AIS message with envelope metadata.
@@ -51,7 +51,7 @@ pub struct AisMessage {
 
 /// The decoded AIS payload, dispatched on the 6-bit `msg_type` field.
 ///
-/// `#[non_exhaustive]` so additional message types (Type 4, ...) can
+/// `#[non_exhaustive]` so additional message types can
 /// be added as typed variants in minor versions without a breaking
 /// change. Types this crate does not yet decode are surfaced as
 /// [`Self::Other`] with the raw bit buffer preserved.
@@ -67,6 +67,8 @@ pub enum AisMessageBody {
     Type2(PositionReportA),
     /// Type 3 — Class A special position report (interrogation response).
     Type3(PositionReportA),
+    /// Type 4 — base station report.
+    Type4(BaseStationReport),
     /// Type 5 — Class A static and voyage data.
     Type5(StaticAndVoyageA),
     /// Type 9 — standard SAR aircraft position report.
@@ -76,6 +78,9 @@ pub enum AisMessageBody {
     /// Type 19 — Class B extended position report (Type 18 plus the
     /// Class A static tail: vessel name, ship type, dimensions, EPFD).
     Type19(ExtendedPositionReportB),
+    /// Type 11 — UTC/date response of a mobile station, with the Type 4
+    /// layout.
+    Type11(BaseStationReport),
     /// Type 21 — aid-to-navigation report (variable length: 272 bits
     /// plus an optional name extension).
     Type21(AidToNavigationReport),
@@ -138,6 +143,8 @@ pub fn decode_message(
         1 => AisMessageBody::Type1(decode_position_report_a(bits, total_bits)?),
         2 => AisMessageBody::Type2(decode_position_report_a(bits, total_bits)?),
         3 => AisMessageBody::Type3(decode_position_report_a(bits, total_bits)?),
+        4 => AisMessageBody::Type4(decode_base_station_report(bits, total_bits)?),
+        11 => AisMessageBody::Type11(decode_base_station_report(bits, total_bits)?),
         5 => AisMessageBody::Type5(decode_static_and_voyage_a(bits, total_bits)?),
         9 => AisMessageBody::Type9(decode_sar_aircraft_position_report(bits, total_bits)?),
         18 => AisMessageBody::Type18(decode_position_report_b(bits, total_bits)?),
@@ -691,6 +698,51 @@ mod tests {
                 assert!(!lr.gnss_position_current);
             }
             other => panic!("expected Type27, got {other:?}"),
+        }
+    }
+
+    /// libais 0.17 decodes the Type 4 payload to mmsi 2576189, 2020-06-01
+    /// 00:00:00, accuracy 0, x 10.487328, y 59.422543, fix type 15,
+    /// raim 1. The Type 11 payload is the same bits with the message
+    /// type changed.
+    #[test]
+    fn decode_runs_full_pipeline_on_type4_and_type11_fixtures() {
+        for (payload, expect_type_4) in [
+            (b"402M??AvAPP000h0MJR07Ug02H0I" as &[u8], true),
+            (b";02M??AvAPP000h0MJR07Ug02H0I", false),
+        ] {
+            let bytes = build_aivdm(1, 1, None, Some(b'A'), payload, 0);
+            let raw = parse_raw(&bytes);
+            let report = match (decode(&raw).unwrap().body, expect_type_4) {
+                (AisMessageBody::Type4(report), true) | (AisMessageBody::Type11(report), false) => {
+                    report
+                }
+                (other, _) => panic!("unexpected body {other:?}"),
+            };
+            assert_eq!(report.mmsi, 2_576_189);
+            assert_eq!(report.year, marlin_field::FieldState::Value(2020));
+            assert_eq!(report.month, marlin_field::FieldState::Value(6));
+            assert_eq!(report.day, marlin_field::FieldState::Value(1));
+            assert_eq!(report.hour, marlin_field::FieldState::Value(0));
+            assert_eq!(report.minute, marlin_field::FieldState::Value(0));
+            assert_eq!(report.second, marlin_field::FieldState::Value(0));
+            assert!(!report.position_accuracy);
+            assert!((report.longitude_deg.value().unwrap() - 10.487_328_333).abs() < 1e-6);
+            assert!((report.latitude_deg.value().unwrap() - 59.422_543_333).abs() < 1e-6);
+            assert_eq!(
+                report.epfd,
+                marlin_field::FieldState::Value(crate::EpfdType::InternalGnss)
+            );
+            assert!(report.raim);
+        }
+    }
+
+    #[test]
+    fn type_4_short_payload_is_rejected() {
+        let (bits, _) = build_unknown(4);
+        match decode_message(&bits, 167, false) {
+            Err(AisError::PayloadTooShort) => {}
+            other => panic!("expected PayloadTooShort, got {other:?}"),
         }
     }
 

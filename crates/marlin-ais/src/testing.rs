@@ -4,6 +4,7 @@
 #![cfg(test)]
 #![allow(dead_code, clippy::expect_used)]
 
+use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -194,4 +195,34 @@ pub(crate) fn write_ais_str(w: &mut BitWriter, text: &[u8], chars: usize) {
         let v = if c >= 64 { c - 64 } else { c };
         w.u(6, u64::from(v));
     }
+}
+
+/// Prefix `sentence` with the TAG block `\<content>*hh\`.
+pub(crate) fn with_tag_block(content: &[u8], sentence: &[u8]) -> Vec<u8> {
+    let cksum = content.iter().fold(0u8, |acc, &b| acc ^ b);
+    let mut out = Vec::with_capacity(content.len() + sentence.len() + 5);
+    out.push(b'\\');
+    out.extend_from_slice(content);
+    out.extend_from_slice(format!("*{cksum:02X}").as_bytes());
+    out.push(b'\\');
+    out.extend_from_slice(sentence);
+    out
+}
+
+/// A Type 5 message for `mmsi`, armored and split into two fragment
+/// payloads. Returns the first payload, the second payload and the fill
+/// bits of the second.
+pub(crate) fn type5_fragments(mmsi: u32) -> (Vec<u8>, Vec<u8>, u8) {
+    let mut w = BitWriter::new();
+    w.u(6, 5);
+    w.u(2, 0);
+    w.u(30, u64::from(mmsi));
+    for _ in 0..6 {
+        w.u(64, 0);
+    }
+    w.u(2, 0);
+    let (bits, total_bits) = w.finish();
+    let (payload, fill_bits) = armor_encode(&bits, total_bits);
+    let (first, second) = payload.split_at(payload.len() / 2);
+    (first.to_vec(), second.to_vec(), fill_bits)
 }

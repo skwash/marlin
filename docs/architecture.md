@@ -366,14 +366,29 @@ consumer pairs by MMSI.
 
 ### Reassembly
 
-`AisReassembler` keys each open partial on `(channel, sequential_id)`
-for every lookup, so the same sequential id can be live on channels A
-and B at once. A single-fragment sentence returns immediately and
-touches no state.
+`AisReassembler` keys each open partial in one of two ways. A fragment
+whose TAG block has a valid `g:part-total-id` parameter is keyed on
+`(source, id)`, with the source from the `s` parameter. Any other
+fragment is keyed on `(channel, sequential_id)`, so the same sequential
+id can be live on channels A and B at once. A single-fragment sentence
+returns immediately and touches no state.
 
-- Fragments must arrive in order. A fragment that is out of order, or a
-  continuation with no partial on its key, yields
+- The `g` parameter is valid for a fragment only if its part and total
+  equal the AIVDM fragment number and count. Otherwise the fragment
+  uses the header key.
+- A group-keyed fragment may arrive in any order. It fills the slot of
+  its part, and the group completes when every slot is full. A part
+  that arrives twice restarts the group.
+- NMEA 4.10 puts `s` on the first sentence of a group only. A fragment
+  without a source joins an open group with the same id and count. When
+  two stations use the same id and one of them sends no source on its
+  later fragments, those fragments join the oldest group that lacks
+  their part.
+- Header-keyed fragments must arrive in order. A fragment that is out of
+  order, or a continuation with no partial on its key, yields
   `AisError::ReassemblyOutOfOrder` and drops the partial.
+- The `AisMessage` carries the TAG block of its first sentence, with or
+  without a group.
 - At most `DEFAULT_MAX_PARTIALS` (16) partials are open. One more
   evicts the oldest and queues `AisError::ReassemblyTimeout`.
 - Expiry by age is opt-in. `with_timeout_ms` sets the limit. The crate

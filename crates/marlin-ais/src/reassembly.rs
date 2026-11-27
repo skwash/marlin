@@ -8,18 +8,33 @@
 //!
 //! # Design choices
 //!
-//! - **Reassembly key: `(channel, sequential_id)`.** This
-//!   lets two multi-sentence messages interleave cleanly on different
-//!   channels or different sequential IDs.
+//! - **Two reassembly keys.** A fragment whose TAG block carries a
+//!   valid `g:part-total-id` parameter is keyed on the TAG group:
+//!   `(source, id)`, where the source is the `s` parameter. Any other
+//!   fragment is keyed on the AIVDM header: `(channel, sequential_id)`.
+//!   Two stations on one merged feed often reuse the same sequential
+//!   id and channel, so only the TAG group tells their fragments apart.
+//!   A `g` parameter is valid for a fragment only if its part and total
+//!   equal the AIVDM fragment number and count. Otherwise the fragment
+//!   falls back to the header key.
+//!
+//! - **The source may be absent on later fragments.** NMEA 4.10 puts
+//!   `s` on the first sentence of a group only. A fragment without a
+//!   source joins any open group with its id and count. The group
+//!   learns its source from the first fragment that has one.
+//!
+//! - **Ordering.** Header-keyed fragments must arrive in order 1, 2,
+//!   3, ... . Any other arrival yields
+//!   [`AisError::ReassemblyOutOfOrder`] and discards the partial.
+//!   Group-keyed fragments may arrive in any order: each one fills the
+//!   slot of its part number, and the group completes when every slot
+//!   is full. A part that arrives twice before the group completes
+//!   restarts the group with the new fragment.
 //!
 //! - **Single-fragment fast path**: when `fragment_count == 1`, the
 //!   reassembler returns a [`ReassembledPayload`] immediately without
 //!   touching internal state. No allocation beyond the one `Vec<u8>`
 //!   that owns the payload copy.
-//!
-//! - **Strict fragment ordering**: fragments must arrive in order
-//!   1, 2, 3, ... . Any out-of-order arrival yields
-//!   [`AisError::ReassemblyOutOfOrder`] and discards the partial.
 //!
 //! - **Bounded-slots eviction for memory safety**: rather than a
 //!   wall-clock timeout (this crate is sans-I/O and `#![no_std]`),
@@ -34,9 +49,12 @@
 //!   caller supplies the clock through [`tick`](AisReassembler::tick)
 //!   (ADR-0004). The reassembler keeps the last ticked time and
 //!   stamps each fragment with it; it never reads a clock itself.
+//!   Both keys share the slots and the age limit.
 
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
+
+use marlin_nmea_envelope::{OwnedTagBlock, TagBlock};
 
 use crate::{AisError, AivdmHeader};
 
@@ -56,6 +74,9 @@ pub struct ReassembledPayload {
     pub fill_bits: u8,
     /// `is_own_ship` propagated from the first fragment.
     pub is_own_ship: bool,
+    /// The TAG block of the first fragment, if it had one. Only
+    /// [`AisReassembler::feed_fragment_tagged`] can set it.
+    pub tag_block: Option<OwnedTagBlock>,
 }
 
 /// Default maximum number of concurrent multi-sentence assemblies held
@@ -73,14 +94,16 @@ pub const DEFAULT_MAX_PARTIALS: usize = 16;
 ///
 /// # Errors
 ///
-/// [`feed_fragment`](Self::feed_fragment) can surface:
+/// [`feed_fragment`](Self::feed_fragment) and
+/// [`feed_fragment_tagged`](Self::feed_fragment_tagged) can surface:
 ///
-/// - [`AisError::MalformedWrapper`] — a multi-fragment header missing
-///   `sequential_id`, or `fragment_number == 0`, or
+/// - [`AisError::MalformedWrapper`] — a header-keyed multi-fragment
+///   header missing `sequential_id`, or `fragment_number == 0`, or
 ///   `fragment_number > fragment_count`.
-/// - [`AisError::ReassemblyOutOfOrder`] — fragment arrived with a
-///   number other than the next expected one for its key, or no
-///   partial is open on its `(channel, sequential_id)` key.
+/// - [`AisError::ReassemblyOutOfOrder`] — a header-keyed fragment
+///   arrived with a number other than the next expected one for its
+///   key, or no partial is open on its `(channel, sequential_id)` key.
+///   A group-keyed fragment never raises it.
 ///
 /// Evictions caused by exceeding
 /// [`max_partials`](Self::max_partials) surface
@@ -109,18 +132,48 @@ pub struct AisReassembler {
     pending_errors: VecDeque<AisError>,
 }
 
+/// What ties the fragments of one message together.
+#[derive(Debug)]
+enum PartialKey {
+    /// The AIVDM header: `(channel, sequential_id)`.
+    Header {
+        channel: Option<u8>,
+        sequential_id: u8,
+    },
+    /// The TAG block group: the `s` parameter, if seen, and the `g` id.
+    Group { source: Option<Vec<u8>>, id: u32 },
+}
+
+/// A fragment that has arrived and waits for the rest of its message.
+#[derive(Debug)]
+struct Fragment {
+    payload: Vec<u8>,
+    fill_bits: u8,
+    is_own_ship: bool,
+    /// Kept for fragment number 1 only: the message reports the TAG
+    /// block of its first sentence.
+    tag_block: Option<OwnedTagBlock>,
+}
+
+impl Fragment {
+    fn new(header: &AivdmHeader<'_>, tag_block: Option<&TagBlock<'_>>) -> Self {
+        Self {
+            payload: header.payload.to_vec(),
+            fill_bits: header.fill_bits,
+            is_own_ship: header.is_own_ship,
+            tag_block: tag_block
+                .filter(|_| header.fragment_number == 1)
+                .map(TagBlock::to_owned_block),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct PartialMessage {
-    channel: Option<u8>,
-    sequential_id: u8,
+    key: PartialKey,
     fragment_count: u8,
-    /// 1-based number of the next fragment we expect to see.
-    next_expected: u8,
-    is_own_ship: bool,
-    payload: Vec<u8>,
-    /// Last-seen `fill_bits` — overwritten on each append; the final
-    /// fragment's value is the one we use at completion.
-    last_fill_bits: u8,
+    /// One slot per fragment, indexed by fragment number minus one.
+    fragments: Vec<Option<Fragment>>,
     /// The reassembler's clock when the last fragment was seen.
     /// `None` means the partial was opened before the first
     /// [`tick`](AisReassembler::tick) and is **not** subject to time
@@ -129,11 +182,90 @@ struct PartialMessage {
 }
 
 impl PartialMessage {
+    fn new(key: PartialKey, fragment_count: u8, now_ms: Option<u64>) -> Self {
+        Self {
+            key,
+            fragment_count,
+            fragments: (0..fragment_count).map(|_| None).collect(),
+            last_touched_ms: now_ms,
+        }
+    }
+
     /// Whether this partial belongs to the `(channel, sequential_id)`
-    /// reassembly key. Every lookup goes through here so the two
+    /// reassembly key. Every header lookup goes through here so the two
     /// channels can never alias each other's sequential-id space.
-    fn has_key(&self, channel: Option<u8>, sequential_id: u8) -> bool {
-        self.channel == channel && self.sequential_id == sequential_id
+    fn has_header_key(&self, channel: Option<u8>, sequential_id: u8) -> bool {
+        matches!(
+            self.key,
+            PartialKey::Header { channel: c, sequential_id: id }
+                if c == channel && id == sequential_id
+        )
+    }
+
+    /// Whether this partial is the open group `id` of `fragment_count`
+    /// fragments, from a source that is compatible with `source`. A
+    /// missing source on either side is compatible with any source.
+    fn is_group(&self, id: u32, fragment_count: u8, source: Option<&[u8]>) -> bool {
+        let PartialKey::Group {
+            source: own_source,
+            id: own_id,
+        } = &self.key
+        else {
+            return false;
+        };
+        *own_id == id
+            && self.fragment_count == fragment_count
+            && match (own_source.as_deref(), source) {
+                (Some(own), Some(other)) => own == other,
+                _ => true,
+            }
+    }
+
+    fn filled(&self) -> usize {
+        self.fragments.iter().flatten().count()
+    }
+
+    fn has_fragment(&self, fragment_number: u8) -> bool {
+        self.slot(fragment_number).is_some_and(Option::is_some)
+    }
+
+    fn slot(&self, fragment_number: u8) -> Option<&Option<Fragment>> {
+        self.fragments
+            .get(usize::from(fragment_number).checked_sub(1)?)
+    }
+
+    fn insert(&mut self, fragment_number: u8, fragment: Fragment, now_ms: Option<u64>) {
+        let slot = usize::from(fragment_number)
+            .checked_sub(1)
+            .and_then(|i| self.fragments.get_mut(i));
+        if let Some(slot) = slot {
+            *slot = Some(fragment);
+        }
+        self.last_touched_ms = now_ms;
+    }
+
+    fn is_complete(&self) -> bool {
+        self.fragments.iter().all(Option::is_some)
+    }
+
+    /// Join the fragments. Call only when
+    /// [`is_complete`](Self::is_complete).
+    fn assemble(self) -> ReassembledPayload {
+        let mut assembled = ReassembledPayload {
+            payload: Vec::new(),
+            fill_bits: 0,
+            is_own_ship: false,
+            tag_block: None,
+        };
+        for (position, fragment) in self.fragments.into_iter().flatten().enumerate() {
+            assembled.payload.extend_from_slice(&fragment.payload);
+            assembled.fill_bits = fragment.fill_bits;
+            if position == 0 {
+                assembled.is_own_ship = fragment.is_own_ship;
+                assembled.tag_block = fragment.tag_block;
+            }
+        }
+        assembled
     }
 }
 
@@ -219,12 +351,10 @@ impl AisReassembler {
         self.pending_errors.pop_front()
     }
 
-    /// Feed an AIVDM/AIVDO header into the reassembler.
-    ///
-    /// The partial it opens or appends to is stamped with the clock
-    /// as of the last [`tick`](Self::tick). Before the first tick
-    /// there is no stamp, and bounded-slots eviction is the only
-    /// mechanism that can retire such a partial.
+    /// Feed an AIVDM/AIVDO header into the reassembler, keyed on the
+    /// AIVDM header. Same as
+    /// [`feed_fragment_tagged`](Self::feed_fragment_tagged) with no
+    /// TAG block.
     ///
     /// Returns:
     /// - `Ok(Some(payload))` — a complete armored payload is ready.
@@ -234,6 +364,27 @@ impl AisReassembler {
     pub fn feed_fragment(
         &mut self,
         header: &AivdmHeader<'_>,
+    ) -> Result<Option<ReassembledPayload>, AisError> {
+        self.feed_fragment_tagged(header, None)
+    }
+
+    /// Feed an AIVDM/AIVDO header and the TAG block of its sentence.
+    ///
+    /// When the TAG block has a valid `g` parameter, the fragment is
+    /// keyed on the TAG group and may arrive out of order; see the
+    /// module documentation. Otherwise this behaves as
+    /// [`feed_fragment`](Self::feed_fragment). Either way, the
+    /// [`ReassembledPayload`] carries the TAG block of the first
+    /// fragment.
+    ///
+    /// The partial it opens or appends to is stamped with the clock
+    /// as of the last [`tick`](Self::tick). Before the first tick
+    /// there is no stamp, and bounded-slots eviction is the only
+    /// mechanism that can retire such a partial.
+    pub fn feed_fragment_tagged(
+        &mut self,
+        header: &AivdmHeader<'_>,
+        tag_block: Option<&TagBlock<'_>>,
     ) -> Result<Option<ReassembledPayload>, AisError> {
         // Validate the fragment-numbering invariants first — these
         // checks apply to single and multi-fragment messages alike.
@@ -250,18 +401,18 @@ impl AisReassembler {
                 payload: header.payload.to_vec(),
                 fill_bits: header.fill_bits,
                 is_own_ship: header.is_own_ship,
+                tag_block: tag_block.map(TagBlock::to_owned_block),
             }));
         }
 
-        // Multi-fragment: sequential_id is required.
-        let seq_id = header.sequential_id.ok_or(AisError::MalformedWrapper)?;
-
-        if header.fragment_number == 1 {
-            self.open_partial(header, seq_id);
-            return Ok(None);
+        let fragment = Fragment::new(header, tag_block);
+        match tag_block.and_then(|tags| group_id(header, tags)) {
+            Some(id) => {
+                let source = tag_block.and_then(TagBlock::source);
+                Ok(self.feed_grouped(header, id, source, fragment))
+            }
+            None => self.feed_in_order(header, fragment),
         }
-
-        self.append_to_partial(header, seq_id)
     }
 
     /// Advance the clock to `now_ms` and evict any partial whose
@@ -290,15 +441,107 @@ impl AisReassembler {
         }
     }
 
-    /// Start (or restart) a partial for a first fragment.
-    fn open_partial(&mut self, header: &AivdmHeader<'_>, seq_id: u8) {
-        // If there's already a partial on the same key, replace it
-        // silently — the old one got interrupted by a fresh fragment 1.
-        // This matches real-world behavior when a multi-sentence
-        // message is truncated and the transmitter immediately starts
-        // a new one.
-        self.partials.retain(|p| !p.has_key(header.channel, seq_id));
+    /// Feed a multi-fragment fragment keyed on the AIVDM header. The
+    /// fragments of a message must arrive in order.
+    fn feed_in_order(
+        &mut self,
+        header: &AivdmHeader<'_>,
+        fragment: Fragment,
+    ) -> Result<Option<ReassembledPayload>, AisError> {
+        // Multi-fragment: sequential_id is required.
+        let seq_id = header.sequential_id.ok_or(AisError::MalformedWrapper)?;
 
+        if header.fragment_number == 1 {
+            // If there's already a partial on the same key, replace it
+            // silently — the old one got interrupted by a fresh fragment 1.
+            // This matches real-world behavior when a multi-sentence
+            // message is truncated and the transmitter immediately starts
+            // a new one.
+            self.partials
+                .retain(|p| !p.has_header_key(header.channel, seq_id));
+            let key = PartialKey::Header {
+                channel: header.channel,
+                sequential_id: seq_id,
+            };
+            self.open_partial(key, header, fragment);
+            return Ok(None);
+        }
+
+        // Channels A and B carry independent sequential-id spaces, so
+        // a partial on the other channel is simply not ours; a
+        // fragment with no partial on its own key is out of order.
+        let Some(idx) = self
+            .partials
+            .iter()
+            .position(|p| p.has_header_key(header.channel, seq_id))
+        else {
+            return Err(AisError::ReassemblyOutOfOrder);
+        };
+        let in_order = self.partials.get(idx).is_some_and(|partial| {
+            partial.fragment_count == header.fragment_count
+                && partial.filled().checked_add(1) == Some(usize::from(header.fragment_number))
+        });
+        if !in_order {
+            let _ = self.partials.remove(idx);
+            return Err(AisError::ReassemblyOutOfOrder);
+        }
+        Ok(self.fill(idx, header.fragment_number, fragment))
+    }
+
+    /// Feed a multi-fragment fragment keyed on its TAG group. Never
+    /// fails: a fragment out of order waits in its slot.
+    fn feed_grouped(
+        &mut self,
+        header: &AivdmHeader<'_>,
+        id: u32,
+        source: Option<&[u8]>,
+        fragment: Fragment,
+    ) -> Option<ReassembledPayload> {
+        let number = header.fragment_number;
+        let count = header.fragment_count;
+
+        let open = self
+            .partials
+            .iter()
+            .position(|p| p.is_group(id, count, source));
+        let free = self
+            .partials
+            .iter()
+            .position(|p| p.is_group(id, count, source) && !p.has_fragment(number));
+
+        if let Some(idx) = free {
+            self.learn_source(idx, source);
+            return self.fill(idx, number, fragment);
+        }
+        if let Some(idx) = open {
+            // The part arrived twice: the old group was interrupted
+            // and a new one has started.
+            let _ = self.partials.remove(idx);
+        }
+        let key = PartialKey::Group {
+            source: source.map(<[u8]>::to_vec),
+            id,
+        };
+        self.open_partial(key, header, fragment);
+        None
+    }
+
+    /// Record the source of a group that did not know it yet.
+    fn learn_source(&mut self, idx: usize, source: Option<&[u8]>) {
+        let Some(PartialMessage {
+            key: PartialKey::Group { source: own, .. },
+            ..
+        }) = self.partials.get_mut(idx)
+        else {
+            return;
+        };
+        if own.is_none() {
+            *own = source.map(<[u8]>::to_vec);
+        }
+    }
+
+    /// Start a partial with its first arrived fragment.
+    fn open_partial(&mut self, key: PartialKey, header: &AivdmHeader<'_>, fragment: Fragment) {
         // Evict if full.
         if self.partials.len() >= self.max_partials {
             // Drop the oldest slot (index 0 is the longest-standing).
@@ -307,75 +550,37 @@ impl AisReassembler {
             self.pending_errors.push_back(AisError::ReassemblyTimeout);
         }
 
-        self.partials.push(PartialMessage {
-            channel: header.channel,
-            sequential_id: seq_id,
-            fragment_count: header.fragment_count,
-            next_expected: 2,
-            is_own_ship: header.is_own_ship,
-            payload: header.payload.to_vec(),
-            last_fill_bits: header.fill_bits,
-            last_touched_ms: self.now_ms,
-        });
+        let mut partial = PartialMessage::new(key, header.fragment_count, self.now_ms);
+        partial.insert(header.fragment_number, fragment, self.now_ms);
+        self.partials.push(partial);
     }
 
-    /// Append to an existing partial. `fragment_number` is guaranteed
-    /// to be >= 2 at this point.
-    fn append_to_partial(
+    /// Store `fragment` in the partial at `idx` and return the joined
+    /// payload if that completes it.
+    fn fill(
         &mut self,
-        header: &AivdmHeader<'_>,
-        seq_id: u8,
-    ) -> Result<Option<ReassembledPayload>, AisError> {
-        // Find the partial on the same `(channel, sequential_id)` key.
-        // Channels A and B carry independent sequential-id spaces, so
-        // a partial on the other channel is simply not ours; a
-        // fragment with no partial on its own key is out of order.
-        let Some(idx) = self
-            .partials
-            .iter()
-            .position(|p| p.has_key(header.channel, seq_id))
-        else {
-            return Err(AisError::ReassemblyOutOfOrder);
-        };
-
-        // Validate against the partial through an immutable borrow so
-        // we stay clear of `clippy::indexing-slicing`.
-        let Some(partial) = self.partials.get(idx) else {
-            return Err(AisError::ReassemblyOutOfOrder);
-        };
-        if partial.fragment_count != header.fragment_count
-            || partial.next_expected != header.fragment_number
-        {
-            let _ = self.partials.remove(idx);
-            return Err(AisError::ReassemblyOutOfOrder);
+        idx: usize,
+        fragment_number: u8,
+        fragment: Fragment,
+    ) -> Option<ReassembledPayload> {
+        let partial = self.partials.get_mut(idx)?;
+        // Refresh the age stamp. A partial opened before the first
+        // tick picks up a stamp on its first append after one.
+        partial.insert(fragment_number, fragment, self.now_ms);
+        if partial.is_complete() {
+            return Some(self.partials.remove(idx).assemble());
         }
-
-        // Append via a scoped mutable borrow; the borrow ends before
-        // we touch `self.partials` again to remove on completion.
-        let is_complete = {
-            let Some(partial) = self.partials.get_mut(idx) else {
-                return Err(AisError::ReassemblyOutOfOrder);
-            };
-            partial.payload.extend_from_slice(header.payload);
-            partial.next_expected = partial.next_expected.saturating_add(1);
-            partial.last_fill_bits = header.fill_bits;
-            // Refresh the age stamp. A partial opened before the first
-            // tick picks up a stamp on its first append after one.
-            partial.last_touched_ms = self.now_ms;
-            header.fragment_number == partial.fragment_count
-        };
-
-        if is_complete {
-            let complete = self.partials.remove(idx);
-            return Ok(Some(ReassembledPayload {
-                payload: complete.payload,
-                fill_bits: complete.last_fill_bits,
-                is_own_ship: complete.is_own_ship,
-            }));
-        }
-
-        Ok(None)
+        None
     }
+}
+
+/// The TAG group id of a fragment, if its `g` parameter is valid for
+/// the fragment: the part and total match the AIVDM header.
+fn group_id(header: &AivdmHeader<'_>, tags: &TagBlock<'_>) -> Option<u32> {
+    let group = tags.group()?;
+    (group.part == u32::from(header.fragment_number)
+        && group.total == u32::from(header.fragment_count))
+    .then_some(group.id)
 }
 
 // ---------------------------------------------------------------------------
@@ -885,5 +1090,176 @@ mod tests {
             Some(AisError::ReassemblyTimeout)
         ));
         assert!(r.take_pending_error().is_none());
+    }
+
+    // -----------------------------------------------------------------
+    // TAG group keying
+    // -----------------------------------------------------------------
+
+    fn grouped(
+        r: &mut AisReassembler,
+        tag: &[u8],
+        frag_count: u8,
+        frag_num: u8,
+        payload: &[u8],
+    ) -> Option<ReassembledPayload> {
+        let tags = TagBlock::parse(tag);
+        r.feed_fragment_tagged(
+            &header(frag_count, frag_num, Some(1), Some(b'A'), payload, 0),
+            Some(&tags),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn group_completes_in_any_order() {
+        let mut r = AisReassembler::new();
+        assert!(grouped(&mut r, b"g:3-3-1", 3, 3, b"cc").is_none());
+        assert!(grouped(&mut r, b"s:x,g:1-3-1", 3, 1, b"aa").is_none());
+        let out = grouped(&mut r, b"g:2-3-1", 3, 2, b"bb").unwrap();
+        assert_eq!(out.payload, b"aabbcc");
+        assert_eq!(r.in_flight(), 0);
+    }
+
+    #[test]
+    fn group_takes_fill_bits_from_the_last_part() {
+        let mut r = AisReassembler::new();
+        let tags = TagBlock::parse(b"g:2-2-1");
+        let last = header(2, 2, Some(1), Some(b'A'), b"bb", 4);
+        assert!(r
+            .feed_fragment_tagged(&last, Some(&tags))
+            .unwrap()
+            .is_none());
+        let first = header(2, 1, Some(1), Some(b'A'), b"aa", 0);
+        let tags = TagBlock::parse(b"g:1-2-1");
+        let out = r
+            .feed_fragment_tagged(&first, Some(&tags))
+            .unwrap()
+            .unwrap();
+        assert_eq!(out.fill_bits, 4);
+    }
+
+    #[test]
+    fn group_does_not_need_a_sequential_id() {
+        let mut r = AisReassembler::new();
+        let tags = TagBlock::parse(b"g:1-2-1");
+        let first = header(2, 1, None, None, b"aa", 0);
+        assert!(r
+            .feed_fragment_tagged(&first, Some(&tags))
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn different_group_ids_do_not_mix() {
+        let mut r = AisReassembler::new();
+        assert!(grouped(&mut r, b"s:x,g:1-2-1", 2, 1, b"a1").is_none());
+        assert!(grouped(&mut r, b"s:x,g:1-2-2", 2, 1, b"a2").is_none());
+        assert_eq!(
+            grouped(&mut r, b"s:x,g:2-2-2", 2, 2, b"b2")
+                .unwrap()
+                .payload,
+            b"a2b2"
+        );
+        assert_eq!(
+            grouped(&mut r, b"s:x,g:2-2-1", 2, 2, b"b1")
+                .unwrap()
+                .payload,
+            b"a1b1"
+        );
+    }
+
+    #[test]
+    fn different_sources_with_the_same_id_do_not_mix() {
+        let mut r = AisReassembler::new();
+        assert!(grouped(&mut r, b"s:x,g:1-2-1", 2, 1, b"xa").is_none());
+        assert!(grouped(&mut r, b"s:y,g:1-2-1", 2, 1, b"ya").is_none());
+        assert_eq!(
+            grouped(&mut r, b"s:y,g:2-2-1", 2, 2, b"yb")
+                .unwrap()
+                .payload,
+            b"yayb"
+        );
+        assert_eq!(
+            grouped(&mut r, b"s:x,g:2-2-1", 2, 2, b"xb")
+                .unwrap()
+                .payload,
+            b"xaxb"
+        );
+    }
+
+    #[test]
+    fn same_id_with_a_different_total_is_another_group() {
+        let mut r = AisReassembler::new();
+        assert!(grouped(&mut r, b"s:x,g:1-2-1", 2, 1, b"aa").is_none());
+        assert!(grouped(&mut r, b"s:x,g:1-3-1", 3, 1, b"cc").is_none());
+        assert_eq!(r.in_flight(), 2);
+    }
+
+    #[test]
+    fn repeated_part_restarts_the_group() {
+        let mut r = AisReassembler::new();
+        assert!(grouped(&mut r, b"s:x,g:1-2-1", 2, 1, b"old").is_none());
+        assert!(grouped(&mut r, b"s:x,g:1-2-1", 2, 1, b"new").is_none());
+        assert_eq!(r.in_flight(), 1);
+        let out = grouped(&mut r, b"s:x,g:2-2-1", 2, 2, b"end").unwrap();
+        assert_eq!(out.payload, b"newend");
+    }
+
+    #[test]
+    fn group_and_header_keys_do_not_alias() {
+        let mut r = AisReassembler::new();
+        // A header-keyed partial on (A, 1) and a group on id 1.
+        r.feed_fragment(&header(2, 1, Some(1), Some(b'A'), b"hh", 0))
+            .unwrap();
+        assert!(grouped(&mut r, b"s:x,g:1-2-1", 2, 1, b"gg").is_none());
+        assert_eq!(r.in_flight(), 2);
+        let out = r
+            .feed_fragment(&header(2, 2, Some(1), Some(b'A'), b"HH", 0))
+            .unwrap()
+            .unwrap();
+        assert_eq!(out.payload, b"hhHH");
+    }
+
+    #[test]
+    fn group_partials_share_the_slot_limit_and_the_timeout() {
+        let mut r = AisReassembler::with_timeout_ms(1, 10);
+        r.tick(0);
+        assert!(grouped(&mut r, b"s:x,g:1-2-1", 2, 1, b"aa").is_none());
+        assert!(grouped(&mut r, b"s:x,g:1-2-2", 2, 1, b"bb").is_none());
+        assert_eq!(r.in_flight(), 1);
+        assert_eq!(r.take_pending_error(), Some(AisError::ReassemblyTimeout));
+        r.tick(11);
+        assert_eq!(r.in_flight(), 0);
+        assert_eq!(r.take_pending_error(), Some(AisError::ReassemblyTimeout));
+    }
+
+    #[test]
+    fn first_fragment_tag_block_is_reported_with_or_without_a_group() {
+        let mut r = AisReassembler::new();
+        let tags = TagBlock::parse(b"s:one,c:5");
+        let first = header(2, 1, Some(1), Some(b'A'), b"aa", 0);
+        r.feed_fragment_tagged(&first, Some(&tags)).unwrap();
+        let second = header(2, 2, Some(1), Some(b'A'), b"bb", 0);
+        let other = TagBlock::parse(b"s:two");
+        let out = r
+            .feed_fragment_tagged(&second, Some(&other))
+            .unwrap()
+            .unwrap();
+        let reported = out.tag_block.unwrap();
+        assert_eq!(reported.as_tag_block().source(), Some(b"one".as_slice()));
+    }
+
+    #[test]
+    fn single_fragment_passes_its_tag_block_through() {
+        let mut r = AisReassembler::new();
+        let tags = TagBlock::parse(b"s:one");
+        let h = header(1, 1, None, None, b"aa", 0);
+        let out = r.feed_fragment_tagged(&h, Some(&tags)).unwrap().unwrap();
+        assert_eq!(
+            out.tag_block.unwrap().as_tag_block().source(),
+            Some(b"one".as_slice())
+        );
+        assert!(r.feed_fragment(&h).unwrap().unwrap().tag_block.is_none());
     }
 }

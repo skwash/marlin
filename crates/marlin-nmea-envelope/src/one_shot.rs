@@ -457,6 +457,30 @@ mod tests {
     }
 
     #[test]
+    fn one_shot_exposes_typed_tag_fields() {
+        let bytes = build_with_tag(b"s:st1,c:1577836800,g:1-2-9", b"GPGGA,1,2,3");
+        let mut parser = OneShot::new();
+        parser.feed(&bytes);
+        let s = parser.next_sentence().unwrap().unwrap();
+        let tags = s.tag_fields().unwrap();
+        assert_eq!(tags.source(), Some(b"st1".as_slice()));
+        assert_eq!(tags.timestamp_millis(), Some(1_577_836_800_000));
+        assert_eq!(tags.group().map(|g| g.id), Some(9));
+    }
+
+    #[test]
+    fn one_shot_without_tag_block_has_no_typed_tag_fields() {
+        let mut parser = OneShot::new();
+        parser.feed(&build_sentence(b"GPGGA,1,2,3"));
+        assert!(parser
+            .next_sentence()
+            .unwrap()
+            .unwrap()
+            .tag_fields()
+            .is_none());
+    }
+
+    #[test]
     fn one_shot_accepts_tag_block_with_invalid_tag_checksum() {
         // ADR-0006: a bad TAG block checksum is advisory, not fatal.
         let bytes = build_with_bad_tag_checksum(b"c:12345", b"GPGGA,1,2,3");

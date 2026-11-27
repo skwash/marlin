@@ -281,10 +281,10 @@ track deliverables (not conversational state).
   smells: an empty RMC status byte decodes to the fabricated
   `DataStatus::Other(0)` instead of not available, and GGA fix quality treats
   an empty field as `Invalid` but fails the sentence on two or more bytes.
-- [ ] Parse NMEA 4.10 TAG blocks in marlin-nmea-envelope
-  `RawSentence.tag_block` is raw bytes; consumers parse `c:` (Unix seconds)
-  themselves. A typed TAG block (`c:`, `s:`, `d:`, `g:`, `n:`, `r:`, `t:`) removes
-  that code. Independent of AIS; own feature.
+- [x] Parse NMEA 4.10 TAG blocks in marlin-nmea-envelope **DONE 2026-11-27**
+  `RawSentence::tag_fields` returns a typed `TagBlock` (`s`, `c`, `g`, `n`, `r`,
+  `d`, `t`, and an iterator over unknown keys). `RawSentence::tag_block` keeps
+  the raw bytes.
 - [ ] Decode AIS Types 4 and 27, and binary Types 6 and 8
   Still routed to `Other`. Types 4 and 27 did not appear in the 2026-09-22
   Kystverket capture; Types 6 and 8 (78 messages there) have no consumer use yet.

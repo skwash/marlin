@@ -111,6 +111,7 @@ mod parser;
 mod sentence;
 mod source;
 mod streaming;
+mod tag_block;
 
 #[cfg(test)]
 pub(crate) mod testing;
@@ -120,6 +121,7 @@ pub use one_shot::OneShot;
 pub use sentence::RawSentence;
 pub use source::SentenceSource;
 pub use streaming::{Streaming, DEFAULT_MAX_BUFFER_SIZE};
+pub use tag_block::{OwnedTagBlock, TagBlock, TagGroup};
 
 /// Parse a single complete NMEA 0183 sentence from a byte slice.
 ///

@@ -32,6 +32,27 @@ with open("capture.nmea", "rb") as f:
 Call `feed()` to push more bytes, then iterate again. One parser handles
 the whole input source.
 
+### TAG block parameters
+
+A sentence that starts with an NMEA 4.10 TAG block carries the raw
+content in `sentence.tag_block`. Read the typed parameters from
+`sentence.tag_fields`, which is `None` when there is no TAG block:
+
+```python
+tags = sentence.tag_fields
+if tags is not None:
+    print(tags.source, tags.timestamp, tags.group)
+    for key, value in tags.unknown_fields:
+        print(key, value)
+```
+
+`timestamp` is Unix seconds as a `float`. A `c` value above
+40,000,000,000 is read as milliseconds and divided by 1000. `timestamp_ms`
+holds the same instant as an `int`. `group` is a `TagGroup(part, total, id)`,
+and `1-2--001` reads as `TagGroup(1, 2, 1)`. A malformed parameter reads as
+`None` and does not hide the other parameters. The TAG block checksum is not
+enforced.
+
 ---
 
 ## 2. Asyncio integration

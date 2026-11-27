@@ -7,8 +7,9 @@ Sans-I/O NMEA 0183 envelope parser. Foundation crate of the `marlin` suite.
 - Locates NMEA 0183 sentence boundaries in a byte feed
 - Verifies the XOR checksum (bytes between `$`/`!` and `*`)
 - Splits the payload into fields (empty fields preserved as empty slices)
-- Recognizes NMEA 4.10 TAG block prefixes (`\...*hh\`) and captures
-  their raw content bytes
+- Recognizes NMEA 4.10 TAG block prefixes (`\...*hh\`), captures
+  their raw content bytes, and reads the parameters (`s`, `c`, `g`, `n`,
+  `r`, `d`, `t`, and unknown keys) through a typed `TagBlock` view
 - Exposes a unified [`SentenceSource`] trait with two implementations:
   - [`OneShot`] — one complete sentence per `feed` (for UDP datagrams)
   - [`Streaming`] — buffered scanning for TCP-style byte streams
@@ -66,6 +67,22 @@ while let Some(Ok(s)) = parser.next_sentence() { ... }
 `Parser` is a `SentenceSource`, so the typed parsers in
 `marlin-nmea-0183` and `marlin-ais` wrap it exactly as they wrap
 `OneShot` or `Streaming`.
+
+### TAG block parameters
+
+```rust
+use marlin_nmea_envelope::parse;
+
+let sentence = parse(b"\\s:st1,c:1577836800,g:1-1-9*43\\$GPGGA,123519*77").unwrap();
+let tags = sentence.tag_fields().unwrap();
+assert_eq!(tags.source(), Some(b"st1".as_slice()));
+assert_eq!(tags.timestamp_millis(), Some(1_577_836_800_000));
+assert_eq!(tags.group().map(|g| g.id), Some(9));
+```
+
+`RawSentence::tag_fields` returns a `TagBlock`. A parameter that is absent
+or malformed reads as `None`, and it never hides the other parameters.
+`TagBlock::unknown_fields` iterates the keys that NMEA 4.10 does not define.
 
 ## Features
 

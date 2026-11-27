@@ -34,6 +34,18 @@ fn drain(parser: &mut Streaming) {
         // We do not care whether a sentence was successfully parsed or
         // produced an Error — only that no panic escapes. Consuming the
         // borrow each iteration lets the next call re-borrow `parser`.
-        let _ = result;
+        if let Ok(sentence) = result {
+            if let Some(tags) = sentence.tag_fields() {
+                let _ = (
+                    tags.source(),
+                    tags.timestamp_millis(),
+                    tags.group(),
+                    tags.line_count(),
+                    tags.relative_time(),
+                    tags.unknown_fields().count(),
+                );
+                let _ = tags.to_owned_block();
+            }
+        }
     }
 }

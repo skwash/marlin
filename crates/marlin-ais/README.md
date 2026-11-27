@@ -32,8 +32,10 @@ only for framing, the wrapper, the armor, a payload below the type's
 floor or reassembly.
 
 `AisFragmentParser` takes bytes and yields `AisMessage` values. It
-reassembles multi-sentence messages keyed on `(channel,
-sequential_id)`, evicts the oldest partial once 16 are open, and can
+reassembles multi-sentence messages keyed on the TAG block group
+`(source, id)` when the sentence has a `g` parameter, and on `(channel,
+sequential_id)` otherwise. `AisMessage::tag_block` holds the TAG block of
+the first sentence. The parser evicts the oldest partial once 16 are open, and can
 expire partials by age when you supply a clock.
 
 ## Quickstart

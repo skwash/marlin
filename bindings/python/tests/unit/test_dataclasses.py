@@ -689,3 +689,38 @@ def test_field_state_mirrors_are_frozen_with_slots() -> None:
     assert not hasattr(state, "__dict__")
     assert NotAvailable().kind == "not_available"
     assert hash(Value(10.2)) == hash(Value(10.2))
+
+
+def test_raw_sentence_tag_fields_round_trip() -> None:
+    from marlin.dataclasses import RawSentence as DCRawSentence
+    from marlin.dataclasses import TagBlock as DCTagBlock
+    from marlin.dataclasses import TagGroup as DCTagGroup
+    from marlin.dataclasses import to_dataclass
+    from marlin.envelope import parse
+
+    body = b"GPGGA,1,2,3"
+    tag = b"s:st1,c:1577836800,g:1-2-9,X:y"
+
+    def xor(data: bytes) -> int:
+        acc = 0
+        for byte in data:
+            acc ^= byte
+        return acc
+
+    line = b"\\" + tag + b"*%02X\\$" % xor(tag) + body + b"*%02X" % xor(body)
+    dc = to_dataclass(parse(line))
+    assert isinstance(dc, DCRawSentence)
+
+    assert dc.tag_fields == DCTagBlock(
+        source="st1",
+        timestamp_ms=1_577_836_800_000,
+        timestamp=1_577_836_800.0,
+        group=DCTagGroup(part=1, total=2, id=9),
+        line_count=None,
+        relative_time=None,
+        destination=None,
+        text=None,
+        unknown_fields=((b"X", b"y"),),
+        raw=tag,
+    )
+    json.dumps(dataclasses.asdict(dc), default=_json_default)

@@ -121,5 +121,7 @@ pub use marlin_field::{FieldState, Invalid, Kind, RawCode};
 // Re-export the envelope types a caller needs alongside this crate:
 // the sentence sources `AisFragmentParser` wraps (`Parser` for a source
 // mode chosen at runtime), and `RawSentence` for the single-fragment
-// `decode` entry point.
-pub use marlin_nmea_envelope::{OneShot, Parser, RawSentence, Streaming};
+// `decode` entry point, and the TAG block types of `AisMessage::tag_block`.
+pub use marlin_nmea_envelope::{
+    OneShot, OwnedTagBlock, Parser, RawSentence, Streaming, TagBlock, TagGroup,
+};

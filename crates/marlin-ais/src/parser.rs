@@ -43,9 +43,13 @@ use crate::{
 /// on it.
 ///
 /// Carries its own [`AisReassembler`] so multi-sentence messages are
-/// transparently glued back together. Each [`next_message`](Self::next_message)
-/// call either yields a complete [`AisMessage`], an error, or `None`
-/// (no complete message available yet).
+/// transparently glued back together. A sentence with a valid TAG block
+/// group (`g:part-total-id`) is joined by that group, so two stations on
+/// one feed can reuse a sequential id. The decoded [`AisMessage`] holds
+/// the TAG block of its first sentence. Each
+/// [`next_message`](Self::next_message) call either yields a complete
+/// [`AisMessage`], an error, or `None` (no complete message available
+/// yet).
 #[derive(Debug)]
 pub struct AisFragmentParser<P> {
     inner: P,
@@ -161,7 +165,10 @@ where
                 Ok(h) => h,
                 Err(e) => return Some(Err(e)),
             };
-            match self.reassembler.feed_fragment(&header) {
+            match self
+                .reassembler
+                .feed_fragment_tagged(&header, raw.tag_fields().as_ref())
+            {
                 Ok(Some(assembled)) => return Some(finish_assembled(&assembled)),
                 Ok(None) => {}
                 Err(e) => return Some(Err(e)),
@@ -178,7 +185,9 @@ where
 /// ("P does not live long enough").
 fn finish_assembled(assembled: &ReassembledPayload) -> Result<AisMessage, AisError> {
     let (bits, total_bits) = armor::decode(&assembled.payload, assembled.fill_bits)?;
-    decode_message(&bits, total_bits, assembled.is_own_ship)
+    let mut message = decode_message(&bits, total_bits, assembled.is_own_ship)?;
+    message.tag_block.clone_from(&assembled.tag_block);
+    Ok(message)
 }
 
 impl<P: Default> Default for AisFragmentParser<P> {
@@ -643,5 +652,288 @@ mod tests {
         let msg = p.next_message().unwrap().unwrap();
         assert!(matches!(msg.body, AisMessageBody::Type1(_)));
         assert_eq!(p.reassembler().in_flight(), 0);
+    }
+
+    // -----------------------------------------------------------------
+    // TAG block group reassembly
+    // -----------------------------------------------------------------
+
+    use crate::testing::{type5_fragments, with_tag_block};
+
+    /// One fragment of a Type 5 message for `mmsi`, wrapped in `tag`.
+    /// Every fragment uses sequential id 1 and channel A, as two
+    /// stations on a merged feed can.
+    fn tagged_fragment(tag: &[u8], mmsi: u32, number: u8) -> Vec<u8> {
+        let (first, second, fill_bits) = type5_fragments(mmsi);
+        let sentence = if number == 1 {
+            build_aivdm(2, 1, Some(1), Some(b'A'), &first, 0)
+        } else {
+            build_aivdm(2, 2, Some(1), Some(b'A'), &second, fill_bits)
+        };
+        with_tag_block(tag, &sentence)
+    }
+
+    fn feed_lines(p: &mut AisFragmentParser<Streaming>, lines: &[Vec<u8>]) {
+        for line in lines {
+            p.feed(line);
+            p.feed(b"\n");
+        }
+    }
+
+    fn mmsi_of(message: &AisMessage) -> u32 {
+        match &message.body {
+            AisMessageBody::Type5(t5) => t5.mmsi,
+            other => panic!("expected Type5, got {other:?}"),
+        }
+    }
+
+    fn source_of(message: &AisMessage) -> Option<Vec<u8>> {
+        let block = message.tag_block.as_ref()?;
+        Some(block.as_tag_block().source()?.to_vec())
+    }
+
+    #[test]
+    fn single_fragment_carries_its_tag_block() {
+        let mut p = AisFragmentParser::new(Streaming::new());
+        let sentence = build_aivdm(1, 1, None, Some(b'A'), b"13aGmP0P00PD;88MD5MTDww@2<0L", 0);
+        feed_lines(&mut p, &[with_tag_block(b"s:st1,c:1577836800", &sentence)]);
+        let msg = p.next_message().unwrap().unwrap();
+        let tags = msg.tag_block.as_ref().unwrap().as_tag_block();
+        assert_eq!(tags.source(), Some(b"st1".as_slice()));
+        assert_eq!(tags.timestamp_millis(), Some(1_577_836_800_000));
+    }
+
+    #[test]
+    fn message_without_a_tag_block_has_none() {
+        let mut p = AisFragmentParser::new(Streaming::new());
+        feed_lines(
+            &mut p,
+            &[build_aivdm(
+                1,
+                1,
+                None,
+                Some(b'A'),
+                b"13aGmP0P00PD;88MD5MTDww@2<0L",
+                0,
+            )],
+        );
+        assert!(p.next_message().unwrap().unwrap().tag_block.is_none());
+    }
+
+    #[test]
+    fn decode_carries_the_tag_block() {
+        let sentence = build_aivdm(1, 1, None, Some(b'A'), b"13aGmP0P00PD;88MD5MTDww@2<0L", 0);
+        let bytes = with_tag_block(b"s:st9", &sentence);
+        let msg = crate::decode(&marlin_nmea_envelope::parse(&bytes).unwrap()).unwrap();
+        assert_eq!(source_of(&msg), Some(b"st9".to_vec()));
+    }
+
+    #[test]
+    fn two_stations_with_the_same_sequential_id_decode_separately() {
+        // Both stations use group id 7, sequential id 1 and channel A.
+        // Only the source tells the fragments apart.
+        let mut p = AisFragmentParser::new(Streaming::new());
+        feed_lines(
+            &mut p,
+            &[
+                tagged_fragment(b"s:stA,c:100,g:1-2-7", 111_111_111, 1),
+                tagged_fragment(b"s:stB,c:200,g:1-2-7", 222_222_222, 1),
+                tagged_fragment(b"g:2-2-7", 111_111_111, 2),
+                tagged_fragment(b"g:2-2-7", 222_222_222, 2),
+            ],
+        );
+        // The fragments of station B carry no source on part 2, so the
+        // second `g:2-2-7` joins the group that still lacks part 2.
+        let first = p.next_message().unwrap().unwrap();
+        let second = p.next_message().unwrap().unwrap();
+        assert_eq!(mmsi_of(&first), 111_111_111);
+        assert_eq!(source_of(&first), Some(b"stA".to_vec()));
+        assert_eq!(mmsi_of(&second), 222_222_222);
+        assert_eq!(source_of(&second), Some(b"stB".to_vec()));
+        assert!(p.next_message().is_none());
+        assert_eq!(p.reassembler().in_flight(), 0);
+    }
+
+    #[test]
+    fn two_stations_with_sources_on_every_fragment_decode_separately() {
+        let mut p = AisFragmentParser::new(Streaming::new());
+        feed_lines(
+            &mut p,
+            &[
+                tagged_fragment(b"s:stA,g:1-2-7", 111_111_111, 1),
+                tagged_fragment(b"s:stB,g:1-2-7", 222_222_222, 1),
+                tagged_fragment(b"s:stB,g:2-2-7", 222_222_222, 2),
+                tagged_fragment(b"s:stA,g:2-2-7", 111_111_111, 2),
+            ],
+        );
+        let first = p.next_message().unwrap().unwrap();
+        let second = p.next_message().unwrap().unwrap();
+        assert_eq!(mmsi_of(&first), 222_222_222);
+        assert_eq!(source_of(&first), Some(b"stB".to_vec()));
+        assert_eq!(mmsi_of(&second), 111_111_111);
+        assert_eq!(source_of(&second), Some(b"stA".to_vec()));
+        assert!(p.next_message().is_none());
+    }
+
+    #[test]
+    fn fragments_out_of_order_join_and_report_the_first_sentence_tag_block() {
+        let mut p = AisFragmentParser::new(Streaming::new());
+        feed_lines(
+            &mut p,
+            &[
+                tagged_fragment(b"g:2-2-31", 333_333_333, 2),
+                tagged_fragment(b"s:stC,c:1481189256123,g:1-2-31", 333_333_333, 1),
+            ],
+        );
+        let msg = p.next_message().unwrap().unwrap();
+        assert_eq!(mmsi_of(&msg), 333_333_333);
+        let tags = msg.tag_block.as_ref().unwrap().as_tag_block();
+        assert_eq!(tags.source(), Some(b"stC".to_vec().as_slice()));
+        assert_eq!(tags.timestamp_millis(), Some(1_481_189_256_123));
+        assert_eq!(tags.group().map(|g| g.part), Some(1));
+        assert!(p.next_message().is_none());
+    }
+
+    #[test]
+    fn header_keyed_fragments_out_of_order_still_fail() {
+        // Without `g`, the AIVDM header behavior is unchanged.
+        let mut p = AisFragmentParser::new(Streaming::new());
+        feed_lines(
+            &mut p,
+            &[
+                tagged_fragment(b"s:stC", 333_333_333, 2),
+                tagged_fragment(b"s:stC", 333_333_333, 1),
+            ],
+        );
+        assert!(matches!(
+            p.next_message().unwrap(),
+            Err(AisError::ReassemblyOutOfOrder)
+        ));
+        assert!(p.next_message().is_none());
+    }
+
+    #[test]
+    fn malformed_group_falls_back_to_the_header_key() {
+        let mut p = AisFragmentParser::new(Streaming::new());
+        feed_lines(
+            &mut p,
+            &[
+                tagged_fragment(b"s:stD,g:1-2", 444_444_444, 1),
+                tagged_fragment(b"s:stD,g:oops", 444_444_444, 2),
+            ],
+        );
+        let msg = p.next_message().unwrap().unwrap();
+        assert_eq!(mmsi_of(&msg), 444_444_444);
+        assert_eq!(source_of(&msg), Some(b"stD".to_vec()));
+    }
+
+    #[test]
+    fn group_that_disagrees_with_the_header_falls_back_to_the_header_key() {
+        // `g` says part 2 of 3, the header says part 1 of 2.
+        let mut p = AisFragmentParser::new(Streaming::new());
+        feed_lines(
+            &mut p,
+            &[
+                tagged_fragment(b"g:2-3-5", 555_555_555, 1),
+                tagged_fragment(b"g:2-3-5", 555_555_555, 2),
+            ],
+        );
+        assert_eq!(mmsi_of(&p.next_message().unwrap().unwrap()), 555_555_555);
+    }
+
+    #[test]
+    fn incomplete_group_expires_and_does_not_join_a_later_fragment() {
+        let reassembler = AisReassembler::with_timeout_ms(4, 300_000);
+        let mut p = AisFragmentParser::with_reassembler(Streaming::new(), reassembler);
+        p.tick(0);
+        feed_lines(&mut p, &[tagged_fragment(b"s:stE,g:1-2-9", 666_666_666, 1)]);
+        assert!(p.next_message().is_none());
+        assert_eq!(p.reassembler().in_flight(), 1);
+
+        p.tick(300_001);
+        assert!(matches!(
+            p.next_message().unwrap(),
+            Err(AisError::ReassemblyTimeout)
+        ));
+        assert_eq!(p.reassembler().in_flight(), 0);
+
+        // The late part 2 finds no group and waits alone.
+        feed_lines(&mut p, &[tagged_fragment(b"s:stE,g:2-2-9", 666_666_666, 2)]);
+        assert!(p.next_message().is_none());
+        assert_eq!(p.reassembler().in_flight(), 1);
+    }
+
+    #[test]
+    fn group_within_the_timeout_completes() {
+        let reassembler = AisReassembler::with_timeout_ms(4, 300_000);
+        let mut p = AisFragmentParser::with_reassembler(Streaming::new(), reassembler);
+        p.tick(0);
+        feed_lines(&mut p, &[tagged_fragment(b"s:stE,g:1-2-9", 666_666_666, 1)]);
+        assert!(p.next_message().is_none());
+        p.tick(299_999);
+        feed_lines(&mut p, &[tagged_fragment(b"s:stE,g:2-2-9", 666_666_666, 2)]);
+        assert_eq!(mmsi_of(&p.next_message().unwrap().unwrap()), 666_666_666);
+    }
+
+    #[test]
+    fn corrupt_fragment_does_not_poison_a_later_group() {
+        let mut p = AisFragmentParser::new(Streaming::new());
+        // The checksum of the second fragment is wrong, so the envelope
+        // rejects it and the group stays open with part 1 only.
+        let mut corrupt = tagged_fragment(b"s:stF,g:2-2-12", 777_777_777, 2);
+        let last = corrupt.len() - 1;
+        corrupt[last] = if corrupt[last] == b'0' { b'1' } else { b'0' };
+        feed_lines(
+            &mut p,
+            &[tagged_fragment(b"s:stF,g:1-2-12", 777_777_777, 1), corrupt],
+        );
+        assert!(matches!(
+            p.next_message().unwrap(),
+            Err(AisError::Envelope(_))
+        ));
+        assert!(p.next_message().is_none());
+
+        // The same station reuses the group id. Its part 1 restarts the
+        // stale group, so the old part 1 does not join the new part 2.
+        feed_lines(
+            &mut p,
+            &[
+                tagged_fragment(b"s:stF,g:1-2-12", 888_888_888, 1),
+                tagged_fragment(b"s:stF,g:2-2-12", 888_888_888, 2),
+            ],
+        );
+        assert_eq!(mmsi_of(&p.next_message().unwrap().unwrap()), 888_888_888);
+        assert!(p.next_message().is_none());
+        assert_eq!(p.reassembler().in_flight(), 0);
+    }
+
+    #[test]
+    fn group_with_a_corrupt_payload_fails_once_and_leaves_no_state() {
+        let mut p = AisFragmentParser::new(Streaming::new());
+        let bad_second = with_tag_block(
+            b"s:stG,g:2-2-14",
+            &build_aivdm(2, 2, Some(1), Some(b'A'), b"\x01\x02", 0),
+        );
+        feed_lines(
+            &mut p,
+            &[
+                tagged_fragment(b"s:stG,g:1-2-14", 999_999_999, 1),
+                bad_second,
+            ],
+        );
+        assert!(matches!(
+            p.next_message().unwrap(),
+            Err(AisError::InvalidArmorChar(_))
+        ));
+        assert_eq!(p.reassembler().in_flight(), 0);
+
+        feed_lines(
+            &mut p,
+            &[
+                tagged_fragment(b"s:stG,g:1-2-14", 123_456_789, 1),
+                tagged_fragment(b"s:stG,g:2-2-14", 123_456_789, 2),
+            ],
+        );
+        assert_eq!(mmsi_of(&p.next_message().unwrap().unwrap()), 123_456_789);
     }
 }

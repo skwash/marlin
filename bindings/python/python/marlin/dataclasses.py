@@ -210,10 +210,37 @@ class Type24BExtent:
 
 
 @dataclass(frozen=True)
+class TagGroup:
+    """Dataclass mirror of marlin.envelope.TagGroup."""
+
+    part: int
+    total: int
+    id: int
+
+
+@dataclass(frozen=True)
+class TagBlock:
+    """Dataclass mirror of marlin.envelope.TagBlock."""
+
+    source: Optional[str]
+    timestamp_ms: Optional[int]
+    timestamp: Optional[float]
+    group: Optional[TagGroup]
+    line_count: Optional[int]
+    relative_time: Optional[int]
+    destination: Optional[str]
+    text: Optional[str]
+    unknown_fields: Tuple[Tuple[bytes, bytes], ...]
+    raw: bytes
+
+
+@dataclass(frozen=True)
 class RawSentence:
     """Dataclass mirror of marlin.envelope.RawSentence.
 
     `fields` uses Tuple to preserve frozen-ness (lists are mutable).
+    `tag_fields` is last and defaults to `None`, so a positional
+    construction written before it existed keeps working.
     """
 
     start_delimiter: bytes
@@ -223,6 +250,7 @@ class RawSentence:
     tag_block: Optional[bytes]
     checksum_ok: bool
     raw: bytes
+    tag_fields: Optional[TagBlock] = None
 
 
 # ---------- NMEA dataclass mirrors ----------
@@ -673,6 +701,7 @@ class AisMessage:
     is_own_ship: bool
     type_tag: str
     body: AisMessageBody
+    tag_fields: Optional[TagBlock] = None
 
 
 # ---------- type aliases ----------
@@ -805,6 +834,8 @@ __all__ = [
     "StaticAndVoyageA",
     "StaticDataB24A",
     "StaticDataB24B",
+    "TagBlock",
+    "TagGroup",
     "Timestamp",
     "Tll",
     "Ttm",

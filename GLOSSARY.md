@@ -21,6 +21,11 @@ The NMEA 4.10 metadata prefix carried before a sentence, between
 backslashes and with its own checksum.
 _Avoid_: tag prefix, header, TAG header
 
+**Tag group**:
+The `g:part-total-id` TAG block parameter. It ties the sentences of one
+group together, even when the AIVDM sequential ids of two stations collide.
+_Avoid_: group tag, sentence group
+
 **Talker**:
 The two-letter source identifier that opens a standard sentence; a
 proprietary `$P…` sentence has none.
@@ -31,7 +36,8 @@ One sentence carrying part of a multi-sentence AIS message.
 _Avoid_: part (reserved for Type 24 Part A/B), chunk, segment
 
 **Reassembly**:
-Joining the fragments of one AIS message, keyed by channel and sequential id.
+Joining the fragments of one AIS message, keyed by the TAG group when the
+sentences have one, else by channel and sequential id.
 _Avoid_: defragmentation, stitching
 
 **Partial**:

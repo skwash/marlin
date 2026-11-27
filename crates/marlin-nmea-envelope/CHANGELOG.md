@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `TagBlock`, `TagGroup` and `OwnedTagBlock` (re-exported from the crate
+  root): a typed view of the NMEA 4.10 TAG block parameters `s`, `c`,
+  `g`, `n`, `r`, `d` and `t`, plus an iterator over the unknown keys.
+  A malformed parameter reads as `None` and does not hide the others.
+  `TagBlock::timestamp_millis` reads a `c` value above 40 000 000 000 as
+  milliseconds and a smaller value as seconds. `TagBlock::group` drops
+  empty parts, so `1-2--001` reads as part 1, total 2, id 1.
+- `RawSentence::tag_fields`, the typed view of `RawSentence::tag_block`.
+  The raw bytes API is unchanged, and the TAG block checksum stays
+  advisory (ADR-0006).
+
 ## [0.3.0] - 2026-10-09
 
 ### Changed (BREAKING)

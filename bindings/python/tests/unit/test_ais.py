@@ -8,6 +8,7 @@ import pytest
 
 from marlin.ais import (
     AidToNavigationReport,
+    AisError,
     AisMessage,
     AisParser,
     AisVersion,
@@ -36,6 +37,7 @@ from marlin.ais import (
     TurnDirection,
     Type24BExtent,
 )
+from marlin.envelope import TagBlock, TagGroup
 from marlin.field import FieldState
 
 from .ais_vectors import (
@@ -1025,3 +1027,125 @@ def test_ais_reassembly_out_of_order_raises() -> None:
     p.feed(frag2)
     with pytest.raises(ReassemblyError):
         list(p.iter(strict=True))
+
+
+# ---------- TAG block fields and group reassembly ----------
+
+TYPE5_PART1 = b"55P5TL01VIaAL@7WKO@mBplU@<PDhh000000001S;AJ::4A80?4i@E53"
+TYPE5_PART2 = b"1CQWBDhH888888888880"
+
+
+def tagged(tag: bytes, sentence: bytes) -> bytes:
+    """Prefix ``sentence`` with the TAG block ``\\<tag>*hh\\``."""
+    x = 0
+    for b in tag:
+        x ^= b
+    return b"\\" + tag + b"*%02X\\" % x + sentence
+
+
+def type5_part(tag: bytes, number: int) -> bytes:
+    """One fragment of the Type 5 message; every one uses seq id 3 on A."""
+    if number == 1:
+        return tagged(tag, aivdm(2, 1, 3, "A", TYPE5_PART1, 0))
+    return tagged(tag, aivdm(2, 2, 3, "A", TYPE5_PART2, 2))
+
+
+def test_ais_message_exposes_the_tag_block_of_a_single_sentence() -> None:
+    p = AisParser.streaming()
+    p.feed(tagged(b"s:st1,c:1577836800123,g:1-1-4", AIVDM_TYPE1))
+    msg = p.next_message()
+    assert msg is not None
+    tags = msg.tag_fields
+    assert tags is not None
+    assert tags.source == "st1"
+    assert tags.timestamp == 1_577_836_800.123
+    assert tags.group == TagGroup(1, 1, 4)
+
+
+def test_ais_message_without_a_tag_block_has_no_tag_fields() -> None:
+    p = AisParser.streaming()
+    p.feed(AIVDM_TYPE1)
+    msg = p.next_message()
+    assert msg is not None
+    assert msg.tag_fields is None
+
+
+def test_ais_message_constructor_takes_tag_fields() -> None:
+    body = Other(msg_type=63, raw_payload=b"\x00", total_bits=8)
+    tags = TagBlock(b"s:x")
+    assert AisMessage(False, "other", body, tags).tag_fields == tags
+    assert AisMessage(False, "other", body).tag_fields is None
+
+
+def test_ais_tag_group_joins_stations_that_share_a_sequential_id() -> None:
+    p = AisParser.streaming()
+    p.feed(type5_part(b"s:stA,c:100,g:1-2-7", 1))
+    p.feed(type5_part(b"s:stB,c:200,g:1-2-7", 1))
+    p.feed(type5_part(b"s:stA,g:2-2-7", 2))
+    p.feed(type5_part(b"s:stB,g:2-2-7", 2))
+    msgs = list(p.iter(strict=True))
+    assert len(msgs) == 2
+    first, second = (m.tag_fields for m in msgs)
+    assert first is not None and second is not None
+    assert (first.source, first.timestamp_ms) == ("stA", 100_000)
+    assert (second.source, second.timestamp_ms) == ("stB", 200_000)
+    assert all(isinstance(m.body, StaticAndVoyageA) for m in msgs)
+
+
+def test_ais_tag_group_accepts_fragments_out_of_order() -> None:
+    p = AisParser.streaming()
+    p.feed(type5_part(b"g:2-2-9", 2))
+    assert p.next_message() is None
+    p.feed(type5_part(b"s:stC,c:1481189256,g:1-2-9", 1))
+    msg = p.next_message()
+    assert msg is not None
+    assert isinstance(msg.body, StaticAndVoyageA)
+    assert msg.body.mmsi == 369190000
+    assert msg.tag_fields is not None
+    assert msg.tag_fields.source == "stC"
+    assert msg.tag_fields.timestamp == 1_481_189_256.0
+
+
+def test_ais_without_a_group_out_of_order_fragments_still_fail() -> None:
+    p = AisParser.streaming()
+    p.feed(type5_part(b"s:stC", 2))
+    with pytest.raises(ReassemblyError):
+        p.next_message()
+
+
+def test_ais_tag_group_expires_after_the_timeout() -> None:
+    p = AisParser.streaming(timeout_ms=300_000, clock="manual")
+    p.tick(now_ms=0)
+    p.feed(type5_part(b"s:stD,g:1-2-5", 1))
+    assert p.next_message() is None
+    p.tick(now_ms=300_001)
+    with pytest.raises(ReassemblyError):
+        p.next_message()
+    p.feed(type5_part(b"s:stD,g:2-2-5", 2))
+    assert p.next_message() is None
+
+
+def test_ais_malformed_group_keeps_the_station_and_uses_the_header() -> None:
+    p = AisParser.streaming()
+    p.feed(type5_part(b"s:stE,g:1-2", 1))
+    p.feed(type5_part(b"s:stE,g:bad", 2))
+    msg = p.next_message()
+    assert msg is not None
+    assert msg.tag_fields is not None
+    assert msg.tag_fields.source == "stE"
+    assert msg.tag_fields.group is None
+
+
+def test_ais_corrupt_fragment_does_not_poison_the_next_group() -> None:
+    p = AisParser.streaming()
+    corrupt = bytearray(type5_part(b"s:stF,g:2-2-12", 2))
+    corrupt[-3] = ord("0") if corrupt[-3] != ord("0") else ord("1")
+    p.feed(type5_part(b"s:stF,g:1-2-12", 1))
+    p.feed(bytes(corrupt))
+    with pytest.raises(AisError, match="checksum"):
+        p.next_message()
+    p.feed(type5_part(b"s:stF,g:1-2-12", 1))
+    p.feed(type5_part(b"s:stF,g:2-2-12", 2))
+    msg = p.next_message()
+    assert msg is not None
+    assert isinstance(msg.body, StaticAndVoyageA)

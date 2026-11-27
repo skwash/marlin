@@ -70,6 +70,7 @@
       "virtual_aton": false
     },
     "is_own_ship": false,
+    "tag_fields": null,
     "type_tag": "type21"
   }
 ]

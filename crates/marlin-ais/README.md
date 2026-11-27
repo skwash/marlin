@@ -8,6 +8,7 @@ Sans-I/O typed decoders for AIS (AIVDM/AIVDO) messages. Built on top of
 | Type | Struct | Fields |
 | --- | --- | --- |
 | 1, 2, 3 | `PositionReportA` | Class A position report: navigation status, rate of turn, SOG, position, COG, true heading, maneuver indicator |
+| 4, 11 | `BaseStationReport` | Base station report and UTC/date response: UTC date and time, position, EPFD, RAIM |
 | 5 | `StaticAndVoyageA` | Class A static and voyage data: IMO number, call sign, name, ship type, dimensions, EPFD, ETA, draught, destination |
 | 9 | `SarAircraftPositionReport` | SAR aircraft position report: altitude, SOG in whole knots, position, COG, altitude sensor |
 | 18 | `PositionReportB` | Class B position report: SOG, position, COG, true heading, Class B capability flags |

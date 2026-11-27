@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Types 4 (base station report) and 11 (UTC/date response) decode to
+  `BaseStationReport` through the new `AisMessageBody::Type4` and
+  `AisMessageBody::Type11` variants. The floor
+  `BASE_STATION_REPORT_BITS` is 168. Both types used to surface as
+  `AisMessageBody::Other`.
 - Type 27 (long-range AIS broadcast) decodes to `LongRangePositionReport`
   through the new `AisMessageBody::Type27` variant. The floor
   `LONG_RANGE_POSITION_REPORT_BITS` is 96. Type 27 used to surface as

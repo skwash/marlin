@@ -16,7 +16,8 @@
 //!   fill bits) from a [`RawSentence`].
 //! - **Typed message decoders** — [`decode_message`] and [`decode`]
 //!   route on the 6-bit message type to a typed [`AisMessageBody`]
-//!   variant: Types 1/2/3 ([`PositionReportA`]), 5
+//!   variant: Types 1/2/3 ([`PositionReportA`]), 4 and 11
+//!   ([`BaseStationReport`]), 5
 //!   ([`StaticAndVoyageA`]), 9 ([`SarAircraftPositionReport`]), 18
 //!   ([`PositionReportB`]), 19 ([`ExtendedPositionReportB`]), 21
 //!   ([`AidToNavigationReport`]), 27 ([`LongRangePositionReport`]), and
@@ -57,6 +58,7 @@ extern crate alloc;
 mod aid_to_navigation_report;
 mod aivdm;
 pub mod armor;
+mod base_station_report;
 mod bit_reader;
 mod error;
 mod extended_position_report_b;
@@ -78,6 +80,9 @@ pub use aid_to_navigation_report::{
     decode_aid_to_navigation_report, AidToNavigationReport, AtonType, AID_TO_NAVIGATION_REPORT_BITS,
 };
 pub use aivdm::{parse_aivdm_wrapper, AivdmHeader};
+pub use base_station_report::{
+    decode_base_station_report, BaseStationReport, BASE_STATION_REPORT_BITS,
+};
 pub use bit_reader::BitReader;
 pub use error::AisError;
 pub use extended_position_report_b::{

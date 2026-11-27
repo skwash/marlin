@@ -22,6 +22,7 @@ from .ais_vectors import (
     AIVDM_TYPE21_GPSD_T21_1_FRAG2,
     AIVDM_TYPE21_GPSD_T21_2_FRAG1,
     AIVDM_TYPE21_GPSD_T21_2_FRAG2,
+    AIVDM_TYPE4,
     AIVDM_TYPE24B_AUXILIARY_CRAFT,
     AIVDM_TYPE27,
 )
@@ -369,6 +370,28 @@ def test_ais_sar_aircraft_position_report_round_trip() -> None:
     d = dataclasses.asdict(dc)
     json.dumps(d, default=_json_default)
     assert d["body"]["radio_status"] == 0x8270
+
+
+def test_ais_base_station_report_round_trip() -> None:
+    from marlin.ais import AisParser, BaseStationReport, EpfdType
+    from marlin.dataclasses import AisMessage as DCAisMessage
+    from marlin.dataclasses import BaseStationReport as DCBaseStationReport
+    from marlin.dataclasses import to_dataclass
+
+    p = AisParser.streaming()
+    p.feed(AIVDM_TYPE4)
+    msgs = list(p)
+    assert len(msgs) == 1
+    assert isinstance(msgs[0].body, BaseStationReport)
+
+    dc = to_dataclass(msgs[0])
+    assert isinstance(dc, DCAisMessage)
+    assert isinstance(dc.body, DCBaseStationReport)
+    assert dc.type_tag == "type4"
+    assert dc.body.mmsi == 2576189
+    # The mirror stores the EpfdType wire value as int.
+    assert dc.body.epfd == Value(int(EpfdType.INTERNAL_GNSS))
+    assert dc.body.year == Value(2020)
 
 
 def test_ais_long_range_position_report_round_trip() -> None:

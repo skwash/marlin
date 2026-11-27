@@ -16,9 +16,9 @@ use pyo3::IntoPyObjectExt;
 use marlin_ais::{
     AidToNavigationReport as RustAidToNavigationReport, AisFragmentParser, AisMessageBody,
     AisReassembler, AisVersion as RustAisVersion, AltitudeSensor as RustAltitudeSensor,
-    AtonType as RustAtonType, BitReader as RustBitReader, Dimensions as RustDimensions,
-    EpfdType as RustEpfdType, Eta as RustEta,
-    ExtendedPositionReportB as RustExtendedPositionReportB, FieldState,
+    AtonType as RustAtonType, BaseStationReport as RustBaseStationReport,
+    BitReader as RustBitReader, Dimensions as RustDimensions, EpfdType as RustEpfdType,
+    Eta as RustEta, ExtendedPositionReportB as RustExtendedPositionReportB, FieldState,
     LongRangePositionReport as RustLongRangePositionReport,
     ManeuverIndicator as RustManeuverIndicator, NavStatus as RustNavStatus,
     PositionReportA as RustPositionReportA, PositionReportB as RustPositionReportB,
@@ -1462,6 +1462,158 @@ impl From<RustPositionReportB> for PyPositionReportB {
     }
 }
 
+// ---------- BaseStationReport (Types 4 and 11) ----------
+
+/// Base station report (Type 4) or UTC/date response (Type 11) payload.
+///
+/// Both types share this class; the message type is
+/// `AisMessage.type_tag` (`"type4"` or `"type11"`). The date, time,
+/// position and EPFD attributes are `marlin.field.FieldState`s. The
+/// constructor accepts `FieldState[T] | T | None` per field-state
+/// attribute and defaults every such keyword to
+/// `FieldState.NotAvailable()`.
+#[pyclass(name = "BaseStationReport", frozen, module = "marlin.ais")]
+#[derive(Clone, Debug)]
+pub struct PyBaseStationReport {
+    #[pyo3(get)]
+    mmsi: u32,
+    year: FieldState<u16>,
+    month: FieldState<u8>,
+    day: FieldState<u8>,
+    hour: FieldState<u8>,
+    minute: FieldState<u8>,
+    second: FieldState<u8>,
+    #[pyo3(get)]
+    position_accuracy: bool,
+    longitude_deg: FieldState<f64>,
+    latitude_deg: FieldState<f64>,
+    epfd: FieldState<PyEpfdType>,
+    #[pyo3(get)]
+    raim: bool,
+    #[pyo3(get)]
+    radio_status: u32,
+}
+
+#[pymethods]
+impl PyBaseStationReport {
+    #[new]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        mmsi = 0,
+        year = None,
+        month = None,
+        day = None,
+        hour = None,
+        minute = None,
+        second = None,
+        position_accuracy = false,
+        longitude_deg = None,
+        latitude_deg = None,
+        epfd = None,
+        raim = false,
+        radio_status = 0,
+    ))]
+    fn new(
+        mmsi: u32,
+        year: Option<&Bound<'_, PyAny>>,
+        month: Option<&Bound<'_, PyAny>>,
+        day: Option<&Bound<'_, PyAny>>,
+        hour: Option<&Bound<'_, PyAny>>,
+        minute: Option<&Bound<'_, PyAny>>,
+        second: Option<&Bound<'_, PyAny>>,
+        position_accuracy: bool,
+        longitude_deg: Option<&Bound<'_, PyAny>>,
+        latitude_deg: Option<&Bound<'_, PyAny>>,
+        epfd: Option<&Bound<'_, PyAny>>,
+        raim: bool,
+        radio_status: u32,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            mmsi,
+            year: field_arg(year)?,
+            month: field_arg(month)?,
+            day: field_arg(day)?,
+            hour: field_arg(hour)?,
+            minute: field_arg(minute)?,
+            second: field_arg(second)?,
+            position_accuracy,
+            longitude_deg: field_arg(longitude_deg)?,
+            latitude_deg: field_arg(latitude_deg)?,
+            epfd: field_arg(epfd)?,
+            raim,
+            radio_status,
+        })
+    }
+
+    #[getter]
+    fn year(&self, py: Python<'_>) -> PyResult<PyFieldState> {
+        to_py(py, self.year)
+    }
+    #[getter]
+    fn month(&self, py: Python<'_>) -> PyResult<PyFieldState> {
+        to_py(py, self.month)
+    }
+    #[getter]
+    fn day(&self, py: Python<'_>) -> PyResult<PyFieldState> {
+        to_py(py, self.day)
+    }
+    #[getter]
+    fn hour(&self, py: Python<'_>) -> PyResult<PyFieldState> {
+        to_py(py, self.hour)
+    }
+    #[getter]
+    fn minute(&self, py: Python<'_>) -> PyResult<PyFieldState> {
+        to_py(py, self.minute)
+    }
+    #[getter]
+    fn second(&self, py: Python<'_>) -> PyResult<PyFieldState> {
+        to_py(py, self.second)
+    }
+    #[getter]
+    fn longitude_deg(&self, py: Python<'_>) -> PyResult<PyFieldState> {
+        to_py(py, self.longitude_deg)
+    }
+    #[getter]
+    fn latitude_deg(&self, py: Python<'_>) -> PyResult<PyFieldState> {
+        to_py(py, self.latitude_deg)
+    }
+    #[getter]
+    fn epfd(&self, py: Python<'_>) -> PyResult<PyFieldState> {
+        to_py(py, self.epfd)
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        Ok(format!(
+            "BaseStationReport(mmsi={}, lat={}, lon={})",
+            self.mmsi,
+            repr_state(py, self.latitude_deg)?,
+            repr_state(py, self.longitude_deg)?,
+        ))
+    }
+}
+
+impl TryFrom<RustBaseStationReport> for PyBaseStationReport {
+    type Error = PyErr;
+
+    fn try_from(d: RustBaseStationReport) -> PyResult<Self> {
+        Ok(Self {
+            mmsi: d.mmsi,
+            year: d.year,
+            month: d.month,
+            day: d.day,
+            hour: d.hour,
+            minute: d.minute,
+            second: d.second,
+            position_accuracy: d.position_accuracy,
+            longitude_deg: d.longitude_deg,
+            latitude_deg: d.latitude_deg,
+            epfd: enum_state(d.epfd)?,
+            raim: d.raim,
+            radio_status: d.radio_status,
+        })
+    }
+}
+
 // ---------- LongRangePositionReport (Type 27) ----------
 
 /// Long-range (satellite) position report payload (Type 27).
@@ -2106,6 +2258,9 @@ pub(crate) fn message_body_to_py(py: Python<'_>, body: AisMessageBody) -> PyResu
         AisMessageBody::Type1(d) | AisMessageBody::Type2(d) | AisMessageBody::Type3(d) => {
             Py::new(py, PyPositionReportA::try_from(d)?)?.into_any()
         }
+        AisMessageBody::Type4(d) | AisMessageBody::Type11(d) => {
+            Py::new(py, PyBaseStationReport::try_from(d)?)?.into_any()
+        }
         AisMessageBody::Type5(d) => Py::new(py, PyStaticAndVoyageA::try_from(d)?)?.into_any(),
         AisMessageBody::Type9(d) => {
             Py::new(py, PySarAircraftPositionReport::from(d))?.into_any()
@@ -2217,10 +2372,12 @@ impl PyAisMessage {
             AisMessageBody::Type1(_) => "type1",
             AisMessageBody::Type2(_) => "type2",
             AisMessageBody::Type3(_) => "type3",
+            AisMessageBody::Type4(_) => "type4",
             AisMessageBody::Type5(_) => "type5",
             AisMessageBody::Type9(_) => "type9",
             AisMessageBody::Type18(_) => "type18",
             AisMessageBody::Type19(_) => "type19",
+            AisMessageBody::Type11(_) => "type11",
             AisMessageBody::Type21(_) => "type21",
             AisMessageBody::Type24A(_) => "type24a",
             AisMessageBody::Type24B(_) => "type24b",
@@ -2570,6 +2727,7 @@ pub(crate) fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult
     m.add_class::<PyAidToNavigationReport>()?;
     m.add_class::<PyStaticDataB24A>()?;
     m.add_class::<PyStaticDataB24B>()?;
+    m.add_class::<PyBaseStationReport>()?;
     m.add_class::<PyLongRangePositionReport>()?;
     m.add_class::<PyOther>()?;
     // Outer message wrapper:

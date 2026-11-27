@@ -76,6 +76,11 @@ AIVDM_TYPE9_GPSD_T9_2 = b"!AIVDM,1,1,,B,91b55wi;hbOS@OdQAC062Ch2089h,0*30\r\n"
 # Type 27 with known fields, also decoded by libais 0.17: mmsi 577305000,
 # accuracy 1, raim 0, nav status 5, lon -6.6667, lat 5.0, sog 12, cog 223,
 # wire GNSS bit 1.
+# Types 4 and 11 with the same bits, decoded by libais 0.17: mmsi 2576189,
+# 2020-06-01 00:00:00, accuracy 0, lon 10.487328, lat 59.422543, fix type 15,
+# raim 1.
+AIVDM_TYPE4 = aivdm(1, 1, None, "A", b"402M??AvAPP000h0MJR07Ug02H0I", 0)
+AIVDM_TYPE11 = aivdm(1, 1, None, "A", b";02M??AvAPP000h0MJR07Ug02H0I", 0)
 AIVDM_TYPE27 = aivdm(1, 1, None, "A", b"K8VSqb9OhH0GL6=v", 0)
 AIVDM_TYPE24B_AUXILIARY_CRAFT = b"!AIVDM,1,1,,A,H>eq`dDUF>4ijkl3Chhi00<Tqds4,0*3A\r\n"
 

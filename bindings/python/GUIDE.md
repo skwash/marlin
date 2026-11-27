@@ -324,7 +324,8 @@ Coverage:
 - typed AIS bodies: `PositionReportA`, `StaticAndVoyageA`,
   `SarAircraftPositionReport`, `PositionReportB`,
   `ExtendedPositionReportB`, `AidToNavigationReport`, `StaticDataB24A`,
-  `StaticDataB24B`, `LongRangePositionReport`, `Other`
+  `StaticDataB24B`, `BaseStationReport`, `LongRangePositionReport`,
+  `Other`
 - AIS wrapper: `AisMessage`
 - field states: `Value`, `AtLeast`, `NotAvailable`, `SenderError` and
   `Invalid`, generic frozen dataclasses with a `kind` literal, nested in

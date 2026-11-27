@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `marlin.ais.BaseStationReport` and its `marlin.dataclasses` mirror: the
+  decoded Type 4 (base station report) and Type 11 (UTC/date response)
+  payload. `AisMessage.type_tag` is `"type4"` or `"type11"`; both types
+  used to decode as `Other`.
 - `marlin.ais.LongRangePositionReport` and its `marlin.dataclasses` mirror:
   the decoded Type 27 (long-range AIS broadcast) payload. A Type 27
   message now has `type_tag == "type27"` and used to decode as `Other`.

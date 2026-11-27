@@ -603,6 +603,28 @@ class StaticDataB24B:
 
 
 @dataclass(frozen=True)
+class BaseStationReport:
+    """Dataclass mirror of marlin.ais.BaseStationReport (Types 4 and 11).
+
+    `epfd` carries the enum member's int value (the wire code).
+    """
+
+    mmsi: int
+    year: FieldState[int]
+    month: FieldState[int]
+    day: FieldState[int]
+    hour: FieldState[int]
+    minute: FieldState[int]
+    second: FieldState[int]
+    position_accuracy: bool
+    longitude_deg: FieldState[float]
+    latitude_deg: FieldState[float]
+    epfd: FieldState[int]
+    raim: bool
+    radio_status: int
+
+
+@dataclass(frozen=True)
 class LongRangePositionReport:
     """Dataclass mirror of marlin.ais.LongRangePositionReport (Type 27).
 
@@ -638,6 +660,7 @@ AisMessageBody = Union[
     AidToNavigationReport,
     StaticDataB24A,
     StaticDataB24B,
+    BaseStationReport,
     LongRangePositionReport,
     Other,
 ]
@@ -753,6 +776,7 @@ __all__ = [
     "AisMessage",
     "AisMessageBody",
     "AtLeast",
+    "BaseStationReport",
     "Dimensions",
     "Eta",
     "ExtendedPositionReportB",

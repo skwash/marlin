@@ -702,6 +702,55 @@ class StaticDataB24B:
     def epfd(self) -> FieldState[EpfdType]: ...
 
 @final
+class BaseStationReport:
+    """Base station report (Type 4) or UTC/date response (Type 11); both
+    share this class and `AisMessage.type_tag` tells them apart. The date,
+    time, position and EPFD attributes are field states."""
+
+    def __new__(
+        cls,
+        mmsi: int = ...,
+        year: FieldState[int] | int | None = ...,
+        month: FieldState[int] | int | None = ...,
+        day: FieldState[int] | int | None = ...,
+        hour: FieldState[int] | int | None = ...,
+        minute: FieldState[int] | int | None = ...,
+        second: FieldState[int] | int | None = ...,
+        position_accuracy: bool = ...,
+        longitude_deg: FieldState[float] | float | None = ...,
+        latitude_deg: FieldState[float] | float | None = ...,
+        epfd: FieldState[EpfdType] | EpfdType | None = ...,
+        raim: bool = ...,
+        radio_status: int = ...,
+    ) -> BaseStationReport: ...
+    @property
+    def mmsi(self) -> int: ...
+    @property
+    def year(self) -> FieldState[int]: ...
+    @property
+    def month(self) -> FieldState[int]: ...
+    @property
+    def day(self) -> FieldState[int]: ...
+    @property
+    def hour(self) -> FieldState[int]: ...
+    @property
+    def minute(self) -> FieldState[int]: ...
+    @property
+    def second(self) -> FieldState[int]: ...
+    @property
+    def position_accuracy(self) -> bool: ...
+    @property
+    def longitude_deg(self) -> FieldState[float]: ...
+    @property
+    def latitude_deg(self) -> FieldState[float]: ...
+    @property
+    def epfd(self) -> FieldState[EpfdType]: ...
+    @property
+    def raim(self) -> bool: ...
+    @property
+    def radio_status(self) -> int: ...
+
+@final
 class LongRangePositionReport:
     """Long-range (satellite) position report (Type 27). Speed is in whole
     knots and course in whole degrees. `gnss_position_current` is True when
@@ -762,6 +811,7 @@ AisMessageBody: TypeAlias = Union[
     AidToNavigationReport,
     StaticDataB24A,
     StaticDataB24B,
+    BaseStationReport,
     LongRangePositionReport,
     Other,
 ]
@@ -832,6 +882,7 @@ __all__ = [
     "AisVersion",
     "AltitudeSensor",
     "AtonType",
+    "BaseStationReport",
     "BitReader",
     "ClockMode",
     "Dimensions",

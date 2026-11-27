@@ -13,6 +13,7 @@ from marlin.ais import (
     AisVersion,
     AltitudeSensor,
     AtonType,
+    BaseStationReport,
     BitReader,
     Dimensions,
     EpfdType,
@@ -42,12 +43,14 @@ from .ais_vectors import (
     AIVDM_TYPE1_INVALID_AND_OVER_RANGE,
     AIVDM_TYPE1_ROT_MINUS_127,
     AIVDM_TYPE1_ROT_PLUS_127,
+    AIVDM_TYPE4,
     AIVDM_TYPE5_FRAG1,
     AIVDM_TYPE5_FRAG2,
     AIVDM_TYPE9_GPSD_T9_2,
     AIVDM_TYPE21_GPSD_T21_1_FRAG1,
     AIVDM_TYPE21_GPSD_T21_1_FRAG2,
     AIVDM_TYPE24B_AUXILIARY_CRAFT,
+    AIVDM_TYPE11,
     AIVDM_TYPE27,
     aivdm,
 )
@@ -869,6 +872,45 @@ def test_aid_to_navigation_report_gpsd_t21_1() -> None:
     assert body.raim is False
     assert body.virtual_aton is False
     assert body.assigned_flag is False
+
+
+def test_base_station_report_shape() -> None:
+    p = BaseStationReport(mmsi=2576189, year=2020, month=6, latitude_deg=59.5, epfd=EpfdType.GPS)
+    assert p.mmsi == 2576189
+    assert p.year == FieldState.Value(2020)
+    assert p.month == FieldState.Value(6)
+    assert p.latitude_deg.value == pytest.approx(59.5)
+    assert p.epfd == FieldState.Value(EpfdType.GPS)
+    # Defaults:
+    assert p.day == FieldState.NotAvailable()
+    assert p.second == FieldState.NotAvailable()
+    assert p.longitude_deg == FieldState.NotAvailable()
+    assert p.position_accuracy is False
+    assert p.raim is False
+    assert p.radio_status == 0
+
+
+@pytest.mark.parametrize(("sentence", "type_tag"), [(AIVDM_TYPE4, "type4"), (AIVDM_TYPE11, "type11")])
+def test_base_station_report_decodes_types_4_and_11(sentence: bytes, type_tag: str) -> None:
+    p = AisParser.streaming()
+    p.feed(sentence)
+    msgs = list(p)
+    assert len(msgs) == 1
+    assert msgs[0].type_tag == type_tag
+    body = msgs[0].body
+    assert isinstance(body, BaseStationReport)
+    assert body.mmsi == 2576189
+    assert body.year == FieldState.Value(2020)
+    assert body.month == FieldState.Value(6)
+    assert body.day == FieldState.Value(1)
+    assert body.hour == FieldState.Value(0)
+    assert body.minute == FieldState.Value(0)
+    assert body.second == FieldState.Value(0)
+    assert body.position_accuracy is False
+    assert body.longitude_deg.value == pytest.approx(10.487328, abs=1e-6)
+    assert body.latitude_deg.value == pytest.approx(59.422543, abs=1e-6)
+    assert body.epfd == FieldState.Value(EpfdType.INTERNAL_GNSS)
+    assert body.raim is True
 
 
 def test_long_range_position_report_shape() -> None:

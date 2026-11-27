@@ -34,6 +34,7 @@ BitReader = _core.ais.BitReader
 
 # Message variants
 AidToNavigationReport = _core.ais.AidToNavigationReport
+BaseStationReport = _core.ais.BaseStationReport
 ExtendedPositionReportB = _core.ais.ExtendedPositionReportB
 LongRangePositionReport = _core.ais.LongRangePositionReport
 Other = _core.ais.Other
@@ -54,6 +55,7 @@ AisMessageBody = Union[
     AidToNavigationReport,
     StaticDataB24A,
     StaticDataB24B,
+    BaseStationReport,
     LongRangePositionReport,
     Other,
 ]
@@ -75,6 +77,7 @@ __all__ = [
     "AisVersion",
     "AltitudeSensor",
     "AtonType",
+    "BaseStationReport",
     "BitReader",
     "ClockMode",
     "Dimensions",

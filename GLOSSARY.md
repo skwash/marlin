@@ -21,6 +21,11 @@ The NMEA 4.10 metadata prefix carried before a sentence, between
 backslashes and with its own checksum.
 _Avoid_: tag prefix, header, TAG header
 
+**Tag group**:
+The `g:part-total-id` TAG block parameter. It ties the sentences of one
+group together.
+_Avoid_: group tag, sentence group
+
 **Talker**:
 The two-letter source identifier that opens a standard sentence; a
 proprietary `$P…` sentence has none.

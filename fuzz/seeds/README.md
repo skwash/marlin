@@ -18,7 +18,7 @@ assertions never run.
 
 | Target | Examples |
 | --- | --- |
-| `envelope` | `!` (truncated AIS start), `$` (truncated NMEA start), `$*` (start + checksum, no body), `!!` (double start) |
+| `envelope` | `!` (truncated AIS start), `$` (truncated NMEA start), `$*` (start + checksum, no body), `!!` (double start), a TAG block with a two-sentence group, a malformed number and an unknown key |
 | `ais_armor` | `\0`, `\003` (control bytes through the 6-bit alphabet) |
 | `ais_bit_reader` | 2-byte payloads exercising past-end saturation |
 | `ais_parser` | Truncations of the full envelope→armor→decode pipeline |

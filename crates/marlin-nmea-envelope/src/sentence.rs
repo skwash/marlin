@@ -2,6 +2,8 @@
 
 use alloc::vec::Vec;
 
+use crate::TagBlock;
+
 /// A single NMEA 0183 sentence, borrowed from the parser's internal buffer.
 ///
 /// `RawSentence` is zero-copy: every slice field borrows from memory owned
@@ -83,4 +85,14 @@ pub struct RawSentence<'a> {
     /// Result of the XOR checksum verification. Always `true` for sentences
     /// returned as `Ok`; reserved for future "lax" modes.
     pub checksum_ok: bool,
+}
+
+impl<'a> RawSentence<'a> {
+    /// The typed view of the TAG block, or `None` if the sentence had no
+    /// TAG block. The raw bytes stay available in
+    /// [`tag_block`](Self::tag_block).
+    #[must_use]
+    pub fn tag_fields(&self) -> Option<TagBlock<'a>> {
+        self.tag_block.map(TagBlock::parse)
+    }
 }

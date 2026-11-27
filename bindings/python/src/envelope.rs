@@ -4,7 +4,9 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyModule, PyTuple};
 use pyo3::wrap_pyfunction;
 
-use marlin_nmea_envelope::{parse as rust_parse, OneShot, RawSentence, SentenceSource, Streaming};
+use marlin_nmea_envelope::{
+    parse as rust_parse, OneShot, OwnedTagBlock, RawSentence, SentenceSource, Streaming, TagGroup,
+};
 
 use crate::errors::envelope_err;
 
@@ -70,6 +72,12 @@ impl PyRawSentence {
         self.tag_block.as_deref().map(|b| PyBytes::new(py, b))
     }
 
+    /// The typed view of `tag_block`, or `None` without a TAG block.
+    #[getter]
+    fn tag_fields(&self) -> Option<PyTagBlock> {
+        self.tag_block.as_deref().map(PyTagBlock::from_content)
+    }
+
     #[getter]
     fn checksum_ok(&self) -> bool {
         self.checksum_ok
@@ -107,6 +115,164 @@ impl PyRawSentence {
         d.set_item("raw", self.raw(py))?;
         Ok(d)
     }
+}
+
+/// The `g` parameter of a TAG block: sentence `part` of `total` in the
+/// group `id` (binding class for `TagGroup`).
+#[pyclass(name = "TagGroup", frozen, eq, hash, module = "marlin.envelope")]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PyTagGroup {
+    part: u32,
+    total: u32,
+    id: u32,
+}
+
+#[pymethods]
+impl PyTagGroup {
+    #[new]
+    fn new(part: u32, total: u32, id: u32) -> Self {
+        Self { part, total, id }
+    }
+
+    #[getter]
+    fn part(&self) -> u32 {
+        self.part
+    }
+
+    #[getter]
+    fn total(&self) -> u32 {
+        self.total
+    }
+
+    #[getter]
+    fn id(&self) -> u32 {
+        self.id
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "TagGroup(part={}, total={}, id={})",
+            self.part, self.total, self.id
+        )
+    }
+}
+
+impl From<TagGroup> for PyTagGroup {
+    fn from(g: TagGroup) -> Self {
+        Self {
+            part: g.part,
+            total: g.total,
+            id: g.id,
+        }
+    }
+}
+
+/// Typed view of an NMEA 4.10 TAG block (binding class for `TagBlock`).
+///
+/// A parameter that is absent or malformed reads as `None` and does not
+/// hide the other parameters. `source`, `destination` and `text` decode
+/// UTF-8 and replace invalid bytes; `unknown_fields` and `raw` keep the
+/// bytes unchanged.
+#[pyclass(name = "TagBlock", frozen, eq, hash, module = "marlin.envelope")]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PyTagBlock {
+    inner: OwnedTagBlock,
+}
+
+#[pymethods]
+impl PyTagBlock {
+    /// Read the TAG block content: the bytes between the backslashes,
+    /// without the trailing `*hh`.
+    #[new]
+    fn new(content: &[u8]) -> Self {
+        Self::from_content(content)
+    }
+
+    #[getter]
+    fn source(&self) -> Option<String> {
+        self.inner.as_tag_block().source().map(lossy)
+    }
+
+    /// The `c` parameter as Unix milliseconds.
+    #[getter]
+    fn timestamp_ms(&self) -> Option<u64> {
+        self.inner.as_tag_block().timestamp_millis()
+    }
+
+    /// The `c` parameter as Unix seconds.
+    #[getter]
+    #[allow(clippy::cast_precision_loss)] // a millisecond count below 2^53 is exact
+    fn timestamp(&self) -> Option<f64> {
+        self.inner
+            .as_tag_block()
+            .timestamp_millis()
+            .map(|ms| ms as f64 / 1000.0)
+    }
+
+    #[getter]
+    fn group(&self) -> Option<PyTagGroup> {
+        self.inner.as_tag_block().group().map(PyTagGroup::from)
+    }
+
+    #[getter]
+    fn line_count(&self) -> Option<u64> {
+        self.inner.as_tag_block().line_count()
+    }
+
+    #[getter]
+    fn relative_time(&self) -> Option<u64> {
+        self.inner.as_tag_block().relative_time()
+    }
+
+    #[getter]
+    fn destination(&self) -> Option<String> {
+        self.inner.as_tag_block().destination().map(lossy)
+    }
+
+    #[getter]
+    fn text(&self) -> Option<String> {
+        self.inner.as_tag_block().text().map(lossy)
+    }
+
+    /// The `(key, value)` pairs whose key NMEA 4.10 does not define.
+    #[getter]
+    fn unknown_fields<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let pairs = self
+            .inner
+            .as_tag_block()
+            .unknown_fields()
+            .map(|(k, v)| PyTuple::new(py, [PyBytes::new(py, k), PyBytes::new(py, v)]))
+            .collect::<PyResult<Vec<_>>>()?;
+        PyTuple::new(py, pairs)
+    }
+
+    /// The TAG block content that this view reads.
+    #[getter]
+    fn raw<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new(py, self.inner.as_tag_block().content())
+    }
+
+    fn __repr__(&self) -> String {
+        let block = self.inner.as_tag_block();
+        format!(
+            "TagBlock(source={:?}, timestamp_ms={:?}, group={:?})",
+            block.source().map(lossy),
+            block.timestamp_millis(),
+            block.group().map(|g| (g.part, g.total, g.id)),
+        )
+    }
+}
+
+impl PyTagBlock {
+    pub(crate) fn from_content(content: &[u8]) -> Self {
+        Self {
+            inner: OwnedTagBlock::new(content),
+        }
+    }
+}
+
+fn lossy(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
 }
 
 /// One-shot envelope parser: designed for datagram-shaped input.
@@ -325,6 +491,8 @@ fn py_parse(py: Python<'_>, data: &[u8]) -> PyResult<PyRawSentence> {
 pub(crate) fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(py, "envelope")?;
     m.add_class::<PyRawSentence>()?;
+    m.add_class::<PyTagBlock>()?;
+    m.add_class::<PyTagGroup>()?;
     m.add_class::<PyOneShotParser>()?;
     m.add_class::<PyStreamingParser>()?;
     m.add_class::<PyEnvelopeIterator>()?;

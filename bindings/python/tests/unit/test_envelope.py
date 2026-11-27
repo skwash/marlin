@@ -1,6 +1,6 @@
 import pytest
 from marlin.envelope import (
-    OneShotParser, StreamingParser, RawSentence, EnvelopeError, parse,
+    OneShotParser, StreamingParser, RawSentence, EnvelopeError, TagBlock, TagGroup, parse,
 )
 
 
@@ -131,6 +131,59 @@ def test_tag_block_preserved():
     assert s.sentence_type == "GGA"
     assert s.raw.startswith(b"$GPGGA")
     assert s.checksum_ok
+
+
+def test_tag_fields_typed():
+    s = parse(_tag_sentence(b"s:st1,c:1577836800,g:1-2-9,n:5,r:7,d:dst,t:hi,X:y", b"GPGGA,1,2,3"))
+    tags = s.tag_fields
+    assert isinstance(tags, TagBlock)
+    assert tags.source == "st1"
+    assert tags.timestamp_ms == 1_577_836_800_000
+    assert tags.timestamp == 1_577_836_800.0
+    assert tags.group == TagGroup(1, 2, 9)
+    assert tags.group is not None
+    assert (tags.group.part, tags.group.total, tags.group.id) == (1, 2, 9)
+    assert tags.line_count == 5
+    assert tags.relative_time == 7
+    assert tags.destination == "dst"
+    assert tags.text == "hi"
+    assert tags.unknown_fields == ((b"X", b"y"),)
+    assert tags.raw == s.tag_block
+
+
+def test_tag_fields_none_without_tag_block():
+    assert parse(GGA_NO_CRLF).tag_fields is None
+
+
+def test_tag_timestamp_in_milliseconds_is_divided():
+    tags = TagBlock(b"c:1481189256123")
+    assert tags.timestamp_ms == 1_481_189_256_123
+    assert tags.timestamp == 1_481_189_256.123
+
+
+def test_tag_group_with_empty_parts():
+    assert TagBlock(b"g:1-2--001").group == TagGroup(1, 2, 1)
+
+
+def test_malformed_tag_parameter_keeps_the_others():
+    tags = TagBlock(b"s:abc,g:1-2,c:x,n:3")
+    assert tags.source == "abc"
+    assert tags.group is None
+    assert tags.timestamp is None
+    assert tags.timestamp_ms is None
+    assert tags.line_count == 3
+
+
+def test_tag_block_value_semantics():
+    assert TagBlock(b"s:a") == TagBlock(b"s:a")
+    assert hash(TagBlock(b"s:a")) == hash(TagBlock(b"s:a"))
+    assert TagBlock(b"s:a") != TagBlock(b"s:b")
+    assert "st1" in repr(TagBlock(b"s:st1"))
+
+
+def test_tag_block_with_invalid_utf8_source_is_replaced():
+    assert TagBlock(b"s:\xff").source == "\ufffd"
+    assert TagBlock(b"s:\xff").raw == b"s:\xff"
 
 
 def test_buffer_overflow_surfaces_variant():

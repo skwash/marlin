@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `marlin.envelope.TagBlock` and `marlin.envelope.TagGroup`: the typed
+  parameters of an NMEA 4.10 TAG block (`source`, `timestamp`,
+  `timestamp_ms`, `group`, `line_count`, `relative_time`, `destination`,
+  `text`, `unknown_fields` and `raw`). A malformed parameter reads as
+  `None` and does not hide the others. `TagBlock(content)` reads the
+  content bytes of a TAG block without its `*hh`.
+- `RawSentence.tag_fields`: the `TagBlock` of a sentence, or `None`.
+  `RawSentence.tag_block` and `RawSentence.as_dict()` are unchanged.
+- Dataclass mirrors `marlin.dataclasses.TagBlock` and `TagGroup`, and the
+  field `RawSentence.tag_fields` (default `None`) on the mirror of
+  `RawSentence`.
+
 ## [0.3.0] - 2026-10-09
 
 ### Added
